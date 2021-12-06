@@ -1,0 +1,20 @@
+[package]
+name = "CompilerV3"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "trielib"
+path = "src/lib.rs"
+proc-macro = true
+
+[[bin]]
+name = "compiler"
+path = "src/main.rs"
+
+[dependencies]
+quote = "1.0"
+lazy_static = "1.4.0"
+proc-macro2 = "1.0.32"
+colored = "2"
