@@ -1,7 +1,7 @@
 use std::{collections::hash_map::RandomState, fmt, iter::Peekable, str::Chars};
 use trielib::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Empty,
     Integer(u64, u8),
@@ -28,7 +28,7 @@ impl LexError {
 }
 
 #[make_keywords]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Keyword {
     Match,    // match
     When,     // when
@@ -65,7 +65,7 @@ pub enum Keyword {
     Enum,     // enum
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
     Assignment,
     As,
@@ -96,7 +96,7 @@ pub enum Operator {
     Spread,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Literal(Literal),
 
@@ -106,6 +106,8 @@ pub enum TokenKind {
 
     /// ";"
     Semi,
+    /// ":"
+    Colon,
     /// ","
     Comma,
     /// "."
@@ -161,7 +163,7 @@ pub enum TokenKind {
     Percent, */
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenKind,
     range: Range,
@@ -173,7 +175,7 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Position {
     line: usize,
     character: usize,
@@ -320,6 +322,7 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                     token_type: match it.next() {
                         Some(c) => match c {
                             ';' => TokenKind::Semi,
+                            ':' => TokenKind::Colon,
                             ',' => TokenKind::Comma,
                             '(' => TokenKind::OpenParen,
                             ')' => TokenKind::CloseParen,
@@ -503,8 +506,14 @@ fn get_ident(c: char, iter: &mut TokenIterator) -> (TokenKind, usize) {
                     }
                     None => (),
                 }
+                println!("{:?}", keyword);
             }
             _ => {
+                if let Some(k) = keyword {
+                    if let Some(k) = k.keyword() {
+                        return (TokenKind::Keyword(k), ident.len());
+                    }
+                }
                 let size = ident.len();
                 return (TokenKind::Ident(ident), size);
             }
