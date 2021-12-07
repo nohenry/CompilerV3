@@ -1,12 +1,7 @@
 use std::{collections::hash_map::RandomState, fmt, iter::Peekable, str::Chars};
 use trielib::*;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
-    Empty,
-    Integer(u64, u8),
-    Float(f64),
-}
+use crate::ast::Literal;
 
 #[derive(Debug, Clone)]
 pub struct LexError {
@@ -94,6 +89,7 @@ pub enum Operator {
     BitLeft,
     BitRight,
     Spread,
+    Arrow,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,7 +159,7 @@ pub enum TokenKind {
     Percent, */
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenKind,
     range: Range,
@@ -175,7 +171,7 @@ impl Token {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Position {
     line: usize,
     character: usize,
@@ -339,6 +335,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         it.next();
                                         Operator::Eq
                                     }
+                                    Some('>') => {
+                                        it.next();
+                                        Operator::Arrow
+                                    }
                                     _ => {
                                         it.next();
                                         Operator::Assignment
@@ -495,18 +495,26 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
 
 fn get_ident(c: char, iter: &mut TokenIterator) -> (TokenKind, usize) {
     let mut ident = c.to_string();
-    let mut keyword = (*KEYWORD_TRIE).next(c);
+    let mut keyword = if c.is_lowercase() {
+        (*KEYWORD_TRIE).next(c)
+    } else {
+        None
+    };
     while let Some(nc) = iter.peek() {
         match nc {
-            'a'..='z' | 'A'..='Z' => {
+            'a'..='z' => {
                 ident.push(*nc);
                 match keyword {
                     Some(trie) => {
+                        println!("Here");
                         keyword = trie.next(*nc);
                     }
-                    None => (),
+                    _ => (),
                 }
-                println!("{:?}", keyword);
+            }
+            'A'..='Z' => {
+                ident.push(*nc);
+                keyword = None
             }
             _ => {
                 if let Some(k) = keyword {

@@ -37,9 +37,7 @@ where
         let index = value as usize - 'a' as usize;
         let found = &mut self.children[index];
         match found {
-            Some(b) => {
-                b.keyword = keyword
-            }
+            Some(b) => b.keyword = keyword,
             None => {
                 let b = Box::new(TrieNode {
                     children: Default::default(),

@@ -4,8 +4,8 @@ use std::{
 };
 
 use crate::{
-    ast::{Expression, ParseNode},
-    lexer::{Keyword, Literal, Operator, Token, TokenKind},
+    ast::{Expression, Literal, ParseNode, Type},
+    lexer::{Keyword, Operator, Token, TokenKind},
 };
 
 #[derive(Debug)]
@@ -162,7 +162,7 @@ fn parse_variable_decleration<'a, T: Iterator<Item = &'a Token>>(
             ..
         }) => {
             tokens.next();
-            Some(Box::new(ParseNode::None))
+            Some(Box::new(ParseNode::Type(parse_type(tokens)?)))
         }
         _ => None,
     };
@@ -208,16 +208,27 @@ fn parse_primary<'a, T: Iterator<Item = &'a Token>>(
 fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
     tokens: &mut Peekable<T>,
 ) -> Result<Expression, ParseError> {
-    match tokens.next() {
+    match tokens.peek() {
         Some(t) => match t {
             Token {
                 token_type: TokenKind::Literal(a),
                 ..
-            } => Ok(Expression::Literal(a.clone())),
+            } => {
+                tokens.next();
+                Ok(Expression::Literal(a.clone()))
+            }
+            Token {
+                token_type: TokenKind::OpenBracket,
+                ..
+            } => parse_array_literal(tokens),
+            Token {
+                token_type: TokenKind::OpenBrace,
+                ..
+            } => parse_template_initializer(tokens, None),
             Token {
                 token_type: TokenKind::Ident(a),
                 ..
-            } => parse_ident(tokens, a),
+            } => parse_ident(tokens),
             _ => Err(ParseError::new(&"Unkown literal value!".to_string())),
         },
         None => Err(ParseError::new(&"Unkown literal value!".to_string())),
@@ -226,56 +237,199 @@ fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
 
 fn parse_ident<'a, T: Iterator<Item = &'a Token>>(
     tokens: &mut Peekable<T>,
-    str: &String,
 ) -> Result<Expression, ParseError> {
-    Ok(Expression::Identifier(String::from(str)))
+    let possible_type = parse_type(tokens)?;
+    if let Some(Token {
+        token_type: TokenKind::OpenBrace,
+        ..
+    }) = tokens.peek()
+    {
+        parse_template_initializer(tokens, Some(Box::new(possible_type)))
+    } else {
+        match possible_type {
+            Type::NamedType(s) => match s.token_type {
+                TokenKind::Ident(s) => Ok(Expression::Identifier(s)),
+                _ => Err(ParseError::new(&format!("Unexpected type in expression!"))),
+            },
+            _ => Err(ParseError::new(&format!("Unexpected type in expression!"))),
+        }
+    }
 }
 
-// fn parse_paren_list<'a, T: Iterator<Item = &'a Token>>(
-//     tokens: &mut Peekable<T>,
-// ) -> Result<ParseNode, ParseError> {
-//     if let Some(Token {
-//         token_type: TokenKind::OpenParen,
-//         ..
-//     }) = tokens.peek()
-//     {
-//         let mut node = ParseNode {
-//             children: vec![],
-//             entry: GrammarItem::List,
-//         };
-//         tokens.next();
-//         while {
-//             if let Some(n) = tokens.peek() {
-//                 match n {
-//                     Token {
-//                         token_type: TokenKind::OpenParen,
-//                         ..
-//                     } => {
-//                         tokens.next();
-//                         false
-//                     }
-//                     _ => {
-//                         node.children.push(parse_expression(tokens, 0)?);
-//                         match tokens.next() {
-//                             Some(t) => match t.token_type() {
-//                                 TokenKind::Comma => (),
-//                                 TokenKind::OpenParen => return Ok(node),
-//                                 _ => return Err(ParseError::new(&String::from("Expected comma!"))),
-//                             },
-//                             _ => return Err(ParseError::new(&String::from("Expected comma!"))),
-//                         };
-//                         true
-//                     }
-//                 }
-//             } else {
-//                 false
-//             }
-//         } {}
-//         return Ok(node);
-//     } else {
-//         Err(ParseError::new(&String::from("Expected left parenthesis!")))
-//     }
-// }
+fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
+    tokens: &mut Peekable<T>,
+    struct_type: Option<Box<Type>>,
+) -> Result<Expression, ParseError> {
+    expect(tokens, TokenKind::OpenBrace)?;
+    let mut key_values = vec![];
+
+    while let Some(_) = tokens.peek() {
+        if let Some(Token {
+            token_type: TokenKind::CloseBrace,
+            ..
+        }) = tokens.peek()
+        {
+            break;
+        }
+        let key = expect(tokens, TokenKind::Ident("".to_string()))?;
+        let key_string = match &key.token_type {
+            TokenKind::Ident(s) => s.clone(),
+            _ => panic!("Shouldn't be here!"),
+        };
+        let value = if let Some(Token {
+            token_type: TokenKind::Colon,
+            ..
+        }) = tokens.peek()
+        {
+            tokens.next();
+            Some(parse_expression(tokens, 0)?)
+        } else {
+            None
+        };
+        key_values.push((key_string, value));
+
+        match tokens.peek() {
+            Some(t) => match t.token_type {
+                TokenKind::Comma => tokens.next(),
+                TokenKind::CloseBrace => {
+                    break;
+                }
+                _ => {
+                    return Err(ParseError::new(&format!(
+                        "Expected comma or closing brace!"
+                    )))
+                }
+            },
+            None => return Err(ParseError::new(&format!("Expected token!"))),
+        };
+    }
+
+    expect(tokens, TokenKind::CloseBrace)?;
+
+    Ok(Expression::Literal(Literal::TemplateInitializer(
+        struct_type,
+        key_values,
+    )))
+}
+
+fn parse_array_literal<'a, T: Iterator<Item = &'a Token>>(
+    tokens: &mut Peekable<T>,
+) -> Result<Expression, ParseError> {
+    expect(tokens, TokenKind::OpenBracket)?;
+    let mut values = vec![];
+    while let Some(_) = tokens.peek() {
+        if let Some(Token {
+            token_type: TokenKind::CloseBracket,
+            ..
+        }) = tokens.peek()
+        {
+            break;
+        }
+        let value = parse_expression(tokens, 0)?;
+        values.push(value);
+        match tokens.peek() {
+            Some(t) => match t.token_type {
+                TokenKind::Comma => tokens.next(),
+                TokenKind::CloseBracket => {
+                    break;
+                }
+                _ => {
+                    return Err(ParseError::new(&format!(
+                        "Expected comma or closing bracket!"
+                    )))
+                }
+            },
+            None => return Err(ParseError::new(&format!("Expected token!"))),
+        };
+    }
+    expect(tokens, TokenKind::CloseBracket)?;
+
+    Ok(Expression::Literal(Literal::Array(values)))
+}
+
+fn parse_type<'a, T: Iterator<Item = &'a Token>>(
+    tokens: &mut Peekable<T>,
+) -> Result<Type, ParseError> {
+    match tokens.next() {
+        Some(t) => match &t.token_type {
+            TokenKind::Ident(_) => Ok(Type::NamedType((*t).clone())),
+            TokenKind::Keyword(k) => match k {
+                Keyword::Int => Ok(Type::Int(8)),
+                Keyword::Uint => Ok(Type::Uint(8)),
+                Keyword::Bool => Ok(Type::Bool),
+                Keyword::Char => Ok(Type::Char),
+                Keyword::Float => Ok(Type::Float),
+                _ => Err(ParseError::new(&format!("{:?} is not a valid type!", k))),
+            },
+            TokenKind::OpenBracket => {
+                let array_type = parse_type(tokens)?;
+                let size = if let Some(Token {
+                    token_type: TokenKind::Colon,
+                    ..
+                }) = tokens.peek()
+                {
+                    tokens.next();
+                    let size = expect(tokens, TokenKind::Literal(Literal::Integer(0, 0)))?;
+                    let numeric_size = match size {
+                        Token {
+                            token_type: TokenKind::Literal(Literal::Integer(i, _)),
+                            ..
+                        } => *i as usize,
+                        _ => {
+                            return Err(ParseError::new(&format!(
+                                "Expected constant integer for array size!"
+                            )));
+                        }
+                    };
+                    Some(numeric_size)
+                } else {
+                    None
+                };
+                Ok(Type::ArrayType(Box::new(array_type), size))
+            }
+            TokenKind::OpenParen => {
+                let mut parameters = vec![];
+                while let Some(_) = tokens.peek() {
+                    let parameter_type = parse_type(tokens)?;
+                    parameters.push(parameter_type);
+
+                    match tokens.peek() {
+                        Some(t) => match t.token_type {
+                            TokenKind::Comma => tokens.next(),
+                            TokenKind::CloseParen => {
+                                tokens.next();
+                                break;
+                            }
+                            _ => {
+                                return Err(ParseError::new(&format!(
+                                    "Expected comma or closing parenthesis!"
+                                )))
+                            }
+                        },
+                        None => return Err(ParseError::new(&format!("Expected token!"))),
+                    };
+                }
+                expect(tokens, TokenKind::CloseParen)?;
+                let ret_type = if let Some(Token {
+                    token_type: TokenKind::Operator(Operator::Arrow),
+                    ..
+                }) = tokens.peek()
+                {
+                    tokens.next();
+                    parse_type(tokens)?
+                } else {
+                    Type::Unit
+                };
+                Ok(Type::FunctionType(parameters, Box::new(ret_type)))
+            }
+            TokenKind::Operator(Operator::BitAnd) => {
+                Ok(Type::ReferenceType(Box::new(parse_type(tokens)?)))
+            }
+            _ => Err(ParseError::new(&format!("{:?} is not a valid type!", t))),
+        },
+        None => Err(ParseError::new(&format!("Expected more tokens for type!"))),
+    }
+}
 
 fn unary_precedence(operator: Operator) -> u8 {
     match operator {
