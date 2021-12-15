@@ -60,6 +60,18 @@ pub enum Keyword {
     Enum,     // enum
 }
 
+impl Keyword {
+    fn translate(&self) -> TokenKind {
+        match self {
+            Keyword::As => TokenKind::Operator(Operator::As),
+            Keyword::Or => TokenKind::Operator(Operator::LogicalOr),
+            Keyword::And => TokenKind::Operator(Operator::LogicalAnd),
+            Keyword::Xor => TokenKind::Operator(Operator::LogicalXor),
+            _ => TokenKind::Keyword(*self),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
     Assignment,
@@ -90,6 +102,7 @@ pub enum Operator {
     BitRight,
     Spread,
     Arrow,
+    Wildcard
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -309,6 +322,25 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                     range: (start_pos, end_pos),
                 }
             }
+            '\'' => {
+                let start_pos = Position { line, character };
+                it.next();
+                character += 1;
+                let mut text = String::new();
+                while let Some(c) = it.next() {
+                    match c {
+                        '\'' => break,
+                        _ => text.insert(text.len(), c),
+                    }
+                }
+                character += text.len() + 1;
+                let end_pos = Position { line, character };
+
+                Token {
+                    token_type: TokenKind::Literal(Literal::String(text)),
+                    range: (start_pos, end_pos),
+                }
+            }
             '+' | '-' | ';' | ',' | '.' | '(' | ')' | '{' | '}' | '[' | ']' | '@' | '#' | '~'
             | '?' | ':' | '$' | '=' | '!' | '<' | '>' | '&' | '|' | '*' | '/' | '^' | '%' => {
                 let start_position = Position { line, character };
@@ -344,8 +376,15 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         Operator::Assignment
                                     }
                                 },
-                                '.' => match it.next() {
-                                    Some('.') => Operator::Spread,
+                                '.' => match it.peek() {
+                                    Some('.') => {
+                                        it.next();
+                                        Operator::Spread
+                                    }
+                                    Some('*') => {
+                                        it.next();
+                                        Operator::Wildcard
+                                    }
                                     _ => Operator::Dot,
                                 },
                                 '!' => match it.peek() {
@@ -372,6 +411,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                             it.next();
                                             Operator::BitLeft
                                         }
+                                        '=' => {
+                                            it.next();
+                                            Operator::LtEq
+                                        }
                                         _ => Operator::Lt,
                                     },
                                     _ => Operator::Lt,
@@ -381,6 +424,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         '>' => {
                                             it.next();
                                             Operator::BitRight
+                                        }
+                                        '=' => {
+                                            it.next();
+                                            Operator::GtEq
                                         }
                                         _ => Operator::Gt,
                                     },
@@ -392,7 +439,7 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                 '+' => Operator::Plus,
                                 '*' => Operator::Mult,
                                 '/' => Operator::Divide,
-                                '^' => Operator::BitNot,
+                                '^' => Operator::BitXor,
                                 '%' => Operator::Percent,
                                 _ => continue,
                             }),
@@ -436,6 +483,7 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
 
 fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
     let mut dec = false;
+    let mut just_dec = false;
 
     let mut base = 10u8;
     let mut number = 0u64;
@@ -447,6 +495,7 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
     while let Some(Ok(digit)) = iter.peek().map(|c| match *c {
         '.' if !dec => {
             dec = true;
+            just_dec = true;
             Ok(0)
         }
         '#' => {
@@ -465,6 +514,10 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
             },
         },
     }) {
+        if index == 0 && just_dec {
+            just_dec = false;
+            continue;
+        }
         if dec {
             decimal = decimal + digit as f64 / (10i32.pow(index) as f64);
             index = index + 1;
@@ -480,7 +533,7 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
         _ => (),
     }
 
-    if dec {
+    if dec && !just_dec {
         if base != 10 {
             Err(LexError::new(&String::from(
                 "Unable to create floating point value with non decimal base!",
@@ -512,14 +565,14 @@ fn get_ident(c: char, iter: &mut TokenIterator) -> (TokenKind, usize) {
                     _ => (),
                 }
             }
-            'A'..='Z' => {
+            'A'..='Z' | '_' => {
                 ident.push(*nc);
                 keyword = None
             }
             _ => {
                 if let Some(k) = keyword {
                     if let Some(k) = k.keyword() {
-                        return (TokenKind::Keyword(k), ident.len());
+                        return (k.translate(), ident.len());
                     }
                 }
                 let size = ident.len();
@@ -530,7 +583,7 @@ fn get_ident(c: char, iter: &mut TokenIterator) -> (TokenKind, usize) {
     }
     if let Some(k) = keyword {
         if let Some(k) = k.keyword() {
-            return (TokenKind::Keyword(k), ident.len());
+            return (k.translate(), ident.len());
         }
     }
     let size = ident.len();

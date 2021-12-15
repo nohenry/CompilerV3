@@ -6,15 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "trielib"
-path = "src/lib.rs"
+path = "compiler/src/lib.rs"
 proc-macro = true
 
 [[bin]]
 name = "compiler"
-path = "src/main.rs"
+path = "compiler/src/main.rs"
 
 [dependencies]
 quote = "1.0"
 lazy_static = "1.4.0"
 proc-macro2 = "1.0.32"
 colored = "2"
+# inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm13-0"] }
+llvm = { path="llvm" }

@@ -1,1 +1,5 @@
-let i = { a: 5 }
+
+do_something() => {
+    let func = (f: int, a: uint) => {
+    }
+}
