@@ -1,4 +1,4 @@
-use crate::lexer::{Operator, Token};
+use crate::lexer::{OperatorKind, Range, Token};
 
 // pub struct VariableDecleration {
 //     identifier: String,
@@ -22,116 +22,237 @@ pub enum LoopExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BinaryExpression {
+    left: Box<Expression>,
+    operator: OperatorKind,
+    right: Box<Expression>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryExpression {
+    expression: Box<Expression>,
+    operator: OperatorKind,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfExpression {
+    if_token: Range,
+    condition: Box<Expression>,
+    body: Box<ParseNode>,
+    else_clause: Option<(
+        /* else token */ Range,
+        /* else clause body*/ Box<ParseNode>,
+    )>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionCall {
+    expression_to_call: Box<Expression>,
+    arguments: Vec<ParseNode>,
+    paren_tokens: Range,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Identifier(Token),
     Literal(Literal),
-    BinaryExpression(
-        /* Operator */ Operator,
-        /* Left hand */ Box<Expression>,
-        /* Right hand */ Box<Expression>,
-    ),
-    UnaryExpression(Operator, Box<Expression>),
+    BinaryExpression(BinaryExpression),
+    UnaryExpression(UnaryExpression),
     LoopExpression(LoopExpression),
-    IfExpression(
-        /* Condition */ Box<Expression>,
-        /* Body */ Box<ParseNode>,
-        /* Possible else clause */ Option<Box<ParseNode>>,
-    ),
-    FunctionCall(
-        /* To be called */ Box<Expression>,
-        /* Arguments */ Vec<Expression>,
-    ),
-    Lambda(FunctionType),
+    IfExpression(IfExpression),
+    FunctionCall(FunctionCall),
+    Lambda(FunctionSignature),
     Index(
         /* Indexable value */ Box<Expression>,
         /* Value indexing */ Box<Expression>,
     ),
 }
 
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct Expression {
+//     kind: ExpressionKind,
+//     range: Range,
+// }
 
+#[derive(Debug, Clone, PartialEq)]
+struct IdentSymbol {
+    identifier: Token,
+}
 
-pub type FunctionType = (
-    /* Parameters with their type */ Vec<(Token, Type)>,
-    /* Return type */ Type,
-    /* Body */ Box<ParseNode>,
-);
+#[derive(Debug, Clone, PartialEq)]
+struct TypeSymbol {
+    symbol: Box<ParseNode>,
+    colon: Range,
+    symbol_type: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionSignature {
+    parameters: Vec<ParseNode>,
+    type_arrow: Option<Punctuation>,
+    return_type: Box<Type>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayType {
+    base_type: Box<Type>,
+    size: Option<(/* Colon */ Range, /* Size */ usize)>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceType {
+    reference: Range,
+    base_type: Box<Type>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericType {
+    base_type: Box<Type>,
+    arguments: Vec<ParseNode>,
+    range: Range,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    Unit,
+    Unit(Range),
     NamedType(Token),
-    Int(u8),
-    Uint(u8),
-    Bool,
-    Float,
-    Char,
-    ArrayType(
-        /* Base type of the array */ Box<Type>,
-        /* Possible size */ Option<usize>,
-    ),
-    FunctionType(
-        /* Parameter types */ Vec<Type>,
-        /* Return type*/ Box<Type>,
-    ),
-    ReferenceType(/* Reference base type*/ Box<Type>),
-    GenericType(
-        /* Base Type */ Box<Type>,
-        /* Generic Arguments */ Vec<Type>,
-    ),
+    Int(u8, Range),
+    Uint(u8, Range),
+    Bool(Range),
+    Float(Range),
+    Char(Range),
+    ArrayType(ArrayType),
+    FunctionType(FunctionSignature),
+    ReferenceType(ReferenceType),
+    GenericType(GenericType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Punctuation {
+    Comma,
+    FunctionArrow,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDecleration {
+    let_token: Range,
+    symbol: Box<ParseNode>,
+    possible_initializer: Option<(
+        /* Initializer */ Box<Expression>,
+        /* Position of assignment operator*/ Range,
+    )>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDecleration {
+    identifier: Token,
+    possible_generic: Option<(Box<ParseNode>,)>,
+    function_type: FunctionSignature,
+    body: Box<ParseNode>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateDecleration {
+    struct_keyword: Range,
+    token: Token,
+    fields: Vec<TypeSymbol>,
+    generic: Option<Box<ParseNode>>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeDecleration {
+    type_keyword: Range,
+    token: Token,
+    old_type: Type,
+    assignment: Range,
+    generic: Option<Box<ParseNode>>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionDecleration {
+    action_keyword: Range,
+    template_type: Type,
+    generic: Option<Box<ParseNode>>,
+    specification: Option<(Range, Type)>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericEntry {
+    token: Token,
+    constraints: Option<Vec<ParseNode>>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericParameters {
+    parameters: Vec<ParseNode>,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportDecleration {
+    import_keyword: Range,
+    path: Vec<Expression>,
+    wildcard: bool,
+    range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseNode {
     None,
-    Expression(Expression),
-    Type(Type),
-    // Identifier, Type, Initializer
-    VariableDecleration(
-        /* Identifier */ Token,
-        /* Possible type */ Option<Box<ParseNode>>,
-        /* Possible initializer */ Option<Box<ParseNode>>,
-    ),
-    FunctionDecleration(
-        /* Identifier */ Token,
-        /* Possible Generic */ Option<Box<ParseNode>>,
-        /* Type */ FunctionType
-    ),
-    Block(/* Statements */ Vec<ParseNode>),
-    Yield(Box<Expression>),
-    Return(Box<Expression>),
-    TemplateDecleration(
-        /* Identifier of template */ Token,
-        /* Fields of template */ Vec<(Token, Type)>,
-        /* Possible Generic Parameter */ Option<Box<ParseNode>>,
-    ),
-    TypeDecleration(/* New type */ Type, /* Old type */ Type),
-    ActionDecleration(
-        /* Struct for action */ Type,
-        /* Possible specification */ Option<Type>,
-        /* Body */ Box<ParseNode>,
-    ),
-    GenericParameters(
-        /* Parameters with their optional constraints */ Vec<(Token, Option<Vec<Type>>)>,
-    ),
-    Tag(/* Expression of tag */ Expression),
-    TagCollection(Vec<ParseNode>, Option<Box<ParseNode>>),
-    Import(
-        /* Module path to import*/ Vec<Expression>,
-        /* Is wildcard .* */ bool,
-    ),
+    Expression(Expression, Range),
+    Type(Type, Range),
+    VariableDecleration(VariableDecleration),
+    FunctionDecleration(FunctionDecleration),
+    Block(/* Statements */ Vec<ParseNode>, Range),
+    Yield(Box<Expression>, Range, Range),
+    Return(Box<Expression>, Range, Range),
+    TemplateDecleration(TemplateDecleration),
+    TypeDecleration(TypeDecleration),
+    ActionDecleration(ActionDecleration),
+    GenericParameters(GenericParameters),
+    Tag(/* Expression of tag */ Expression, Range),
+    TagCollection(Vec<ParseNode>, Option<Box<ParseNode>>, Range),
+    Import(ImportDecleration),
+    Punctuation(Punctuation, Range),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayInitializer {
+    elements: Vec<ParseNode>,
+    bracket_token: Range,
+    range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateInitializer {
+    named_type: Option<Box<Type>>,
+    initializer_values: Vec<(String, Option<Expression>)>,
+    brace_token: Range,
+    range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Empty,
-    Integer(u64, u8),
-    Float(f64),
-    Boolean(bool),
+    Integer(u64, u8, Range),
+    Float(f64, Range),
+    Boolean(bool, Range),
 
     // The following varients are formed in the parser
-    Array(/* Initializer values */ Vec<Expression>),
-    TemplateInitializer(
-        /* Possible named type */ Option<Box<Type>>,
-        /* Initializer values  */ Vec<(String, Option<Expression>)>,
-    ),
-    String(String),
+    Array(ArrayInitializer),
+    TemplateInitializer(TemplateInitializer),
+    String(String, Range),
 }

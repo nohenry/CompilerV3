@@ -24,7 +24,7 @@ pub fn create_entry(items: TokenStream) -> TokenStream {
                     {
                         let mut current_node = &mut root_node;
                      for (i, c) in #keyword.as_bytes().iter().enumerate() {
-                         let endpoint: Option<Keyword> = if i == #keyword.len() - 1 {
+                         let endpoint: Option<#enum_type> = if i == #keyword.len() - 1 {
                              Some(#enum_type::#i)
                          } else {
                              None
