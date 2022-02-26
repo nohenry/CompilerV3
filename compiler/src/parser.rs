@@ -116,7 +116,9 @@ fn parse_top_level_statement<'a, T: Iterator<Item = &'a Token>>(
             TokenKind::OpenBracket => parse_tag(tokens),
             TokenKind::Ident(_) => parse_function(tokens),
             TokenKind::Keyword(k) => match k {
+                Keyword::Use => parse_use(tokens),
                 Keyword::Import => parse_import(tokens),
+                Keyword::Include => parse_include(tokens),
                 Keyword::Template => parse_template(tokens),
                 Keyword::Action => parse_action(tokens),
                 Keyword::Type => {
@@ -627,6 +629,21 @@ fn parse_tag<'a, T: Iterator<Item = &'a Token>>(
     Ok(ParseNode::Tag(expression))
 }
 
+fn parse_use<'a, T: Iterator<Item = &'a Token>>(
+    tokens: &mut Peekable<T>,
+) -> Result<ParseNode, ParseError> {
+    expect(tokens, TokenKind::Keyword(Keyword::Use))?;
+    match tokens.peek() {
+        Some(Token { token_type: TokenKind::Keyword(Keyword::Keyword), .. }) => {
+           tokens.next();
+           let kw_token = expect(tokens, TokenKind::Ident(String::from("")))?;
+           Ok(ParseNode::UseKeyword(kw_token.clone())) 
+        },
+        None => Err(ParseError::new(&String::from("Expected token in use statement!"))),
+        _ => Ok(ParseNode::Use())
+    } 
+}
+
 fn parse_import<'a, T: Iterator<Item = &'a Token>>(
     tokens: &mut Peekable<T>,
 ) -> Result<ParseNode, ParseError> {
@@ -657,6 +674,29 @@ fn parse_import<'a, T: Iterator<Item = &'a Token>>(
         false
     };
     Ok(ParseNode::Import(modules, wildcard))
+}
+
+fn parse_include<'a, T: Iterator<Item = &'a Token>>(
+    tokens: &mut Peekable<T>,
+) -> Result<ParseNode, ParseError> {
+    expect(tokens, TokenKind::Keyword(Keyword::Include))?;
+    let mut modules = vec![];
+    let thing = parse_expression(tokens, 0)?;
+    fn add_wild(modules: &mut Vec<Expression>, node: &Expression) {
+        match node {
+            Expression::BinaryExpression(_, l, r) => {
+                add_wild(modules, l.as_ref());
+                add_wild(modules, r.as_ref());
+            }
+            Expression::Identifier(_) => {
+                modules.push(node.clone());
+            }
+            _ => (),
+        }
+    }
+    add_wild(&mut modules, &thing);
+    
+    Ok(ParseNode::Include(modules))
 }
 
 fn parse_primary<'a, T: Iterator<Item = &'a Token>>(

@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "colored",
  "lazy_static",
- "llvm",
  "proc-macro2",
  "quote",
 ]
@@ -55,10 +54,6 @@ name = "libc"
 version = "0.2.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f98a04dce437184842841303488f70d0188c5f51437d2a834dc097eafa909a01"
-
-[[package]]
-name = "llvm"
-version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"

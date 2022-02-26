@@ -58,6 +58,9 @@ pub enum Keyword {
     Const,    // const
     Action,   // action
     Enum,     // enum
+    Use,      // use,
+    Keyword,  // keyword
+    Include,  // include
 }
 
 impl Keyword {
@@ -102,7 +105,7 @@ pub enum Operator {
     BitRight,
     Spread,
     Arrow,
-    Wildcard
+    Wildcard,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +173,21 @@ pub enum TokenKind {
     Caret,
     /// "%"
     Percent, */
+}
+
+#[macro_export]
+macro_rules! cast {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(a) = $target { // #1
+                a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}", 
+                    stringify!($pat)); // #2
+            }
+        }
+    };
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -118,6 +118,11 @@ pub enum ParseNode {
         /* Module path to import*/ Vec<Expression>,
         /* Is wildcard .* */ bool,
     ),
+    Include(
+        /* Module path to import*/ Vec<Expression>,
+    ),
+    UseKeyword(Token),
+    Use()
 }
 
 #[derive(Debug, Clone, PartialEq)]
