@@ -77,6 +77,8 @@ pub enum Type {
         /* Base Type */ Box<Type>,
         /* Generic Arguments */ Vec<Type>,
     ),
+    String,
+    None
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     ast::{Expression, FunctionType, Literal, LoopExpression, ParseNode, Type},
+    cast,
     lexer::{Keyword, Operator, Token, TokenKind},
 };
 
@@ -466,22 +467,44 @@ fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
                 tokens.next(); // eat keyword
                 let condition = parse_expression(tokens, 0)?;
                 let body = parse_block_statement(tokens)?;
-                let else_clause = if let Some(Token {
+
+                let mut if_expr =
+                    Expression::IfExpression(Box::new(condition), Box::new(body), None);
+                // let a = cast!(&if_expr, ParseNode::Expression);
+                let (_, _, else_cl) = cast!(&mut if_expr, Expression::IfExpression, 3);
+                let mut insert = else_cl;
+
+                while let Some(Token {
+                    token_type: TokenKind::Keyword(Keyword::Elif),
+                    ..
+                }) = tokens.peek()
+                {
+                    tokens.next();
+
+                    let condition = parse_expression(tokens, 0)?;
+                    let body = parse_block_statement(tokens)?;
+                    *insert = Some(Box::new(ParseNode::Expression(Expression::IfExpression(
+                        Box::new(condition),
+                        Box::new(body),
+                        None,
+                    ))));
+                    let a = insert.as_mut().unwrap();
+                    let a = cast!(a.as_mut(), ParseNode::Expression);
+                    let (_, _, else_cl) = cast!(a, Expression::IfExpression, 3);
+                    insert = else_cl;
+                }
+
+                if let Some(Token {
                     token_type: TokenKind::Keyword(Keyword::Else),
                     ..
                 }) = tokens.peek()
                 {
                     tokens.next();
-                    Some(Box::new(parse_block_statement(tokens)?))
-                } else {
-                    None
-                };
 
-                Ok(Expression::IfExpression(
-                    Box::new(condition),
-                    Box::new(body),
-                    else_clause,
-                ))
+                    *insert = Some(Box::new(parse_block_statement(tokens)?));
+                }
+
+                Ok(if_expr)
             }
             TokenKind::Keyword(Keyword::Loop) => {
                 tokens.next();
@@ -634,14 +657,19 @@ fn parse_use<'a, T: Iterator<Item = &'a Token>>(
 ) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Use))?;
     match tokens.peek() {
-        Some(Token { token_type: TokenKind::Keyword(Keyword::Keyword), .. }) => {
-           tokens.next();
-           let kw_token = expect(tokens, TokenKind::Ident(String::from("")))?;
-           Ok(ParseNode::UseKeyword(kw_token.clone())) 
-        },
-        None => Err(ParseError::new(&String::from("Expected token in use statement!"))),
-        _ => Ok(ParseNode::Use())
-    } 
+        Some(Token {
+            token_type: TokenKind::Keyword(Keyword::Keyword),
+            ..
+        }) => {
+            tokens.next();
+            let kw_token = expect(tokens, TokenKind::Ident(String::from("")))?;
+            Ok(ParseNode::UseKeyword(kw_token.clone()))
+        }
+        None => Err(ParseError::new(&String::from(
+            "Expected token in use statement!",
+        ))),
+        _ => Ok(ParseNode::Use()),
+    }
 }
 
 fn parse_import<'a, T: Iterator<Item = &'a Token>>(
@@ -695,7 +723,7 @@ fn parse_include<'a, T: Iterator<Item = &'a Token>>(
         }
     }
     add_wild(&mut modules, &thing);
-    
+
     Ok(ParseNode::Include(modules))
 }
 
@@ -1109,7 +1137,7 @@ fn unary_precedence(operator: Operator) -> u8 {
         Operator::Minus
         | Operator::LogicalNot
         | Operator::BitNot
-        | Operator::Mult
+        | Operator::DeRef
         | Operator::BitAnd => 14,
         _ => 0,
     }

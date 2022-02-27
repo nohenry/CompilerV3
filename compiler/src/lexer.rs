@@ -61,12 +61,14 @@ pub enum Keyword {
     Use,      // use,
     Keyword,  // keyword
     Include,  // include
+    Mut,      // mut
 }
 
 impl Keyword {
     fn translate(&self) -> TokenKind {
         match self {
             Keyword::As => TokenKind::Operator(Operator::As),
+            // Keyword::Mut => TokenKind::Operator(Operator::Mut),
             Keyword::Or => TokenKind::Operator(Operator::LogicalOr),
             Keyword::And => TokenKind::Operator(Operator::LogicalAnd),
             Keyword::Xor => TokenKind::Operator(Operator::LogicalXor),
@@ -106,6 +108,8 @@ pub enum Operator {
     Spread,
     Arrow,
     Wildcard,
+    Mut,
+    DeRef
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,17 +181,30 @@ pub enum TokenKind {
 
 #[macro_export]
 macro_rules! cast {
-    ($target: expr, $pat: path) => {
-        {
-            if let $pat(a) = $target { // #1
-                a
-            } else {
-                panic!(
-                    "mismatch variant when cast to {}", 
-                    stringify!($pat)); // #2
-            }
+    ($target: expr, $pat: path) => {{
+        if let $pat(a) = $target {
+            // #1
+            a
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
         }
-    };
+    }};
+    ($target: expr, $pat: path, 2) => {{
+        if let $pat(a, b) = $target {
+            // #1
+            (a, b)
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
+        }
+    }};
+    ($target: expr, $pat: path, 3) => {{
+        if let $pat(a, b, c) = $target {
+            // #1
+            (a, b, c)
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
+        }
+    }};
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -340,14 +357,14 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                     range: (start_pos, end_pos),
                 }
             }
-            '\'' => {
+            '\'' | '"' => {
                 let start_pos = Position { line, character };
                 it.next();
                 character += 1;
                 let mut text = String::new();
                 while let Some(c) = it.next() {
                     match c {
-                        '\'' => break,
+                        '\'' | '"' => break,
                         _ => text.insert(text.len(), c),
                     }
                 }
@@ -376,10 +393,11 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                             '}' => TokenKind::CloseBrace,
                             '[' => TokenKind::OpenBracket,
                             ']' => TokenKind::CloseBracket,
-                            '@' => TokenKind::At,
+                            // '@' => TokenKind::At,
                             '#' => TokenKind::Pound,
                             _ => TokenKind::Operator(match c {
                                 '~' => Operator::BitNot,
+                                '@' => Operator::DeRef,
                                 '=' => match it.peek() {
                                     Some('=') => {
                                         it.next();
