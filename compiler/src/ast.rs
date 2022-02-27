@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::lexer::{Operator, Token};
 
 // pub struct VariableDecleration {
@@ -78,6 +80,7 @@ pub enum Type {
         /* Generic Arguments */ Vec<Type>,
     ),
     String,
+    UnnamedTemplate(HashMap<String, Type>),
     None
 }
 

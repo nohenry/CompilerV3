@@ -12,7 +12,7 @@ pub enum SymbolType {
     NativeFunction(Box<fn(Vec<Value>)>, Vec<Type>, Type),
     Template,
     Module,
-    Variable(Value),
+    Variable(Value, Type),
 }
 
 impl Debug for SymbolType {
@@ -24,7 +24,9 @@ impl Debug for SymbolType {
             }
             Self::NativeFunction(_, _, _) => f.debug_tuple("NativeFunction").finish(),
             Self::Template => write!(f, "Template"),
-            Self::Variable(arg0) => f.debug_tuple("Variable").field(arg0).finish(),
+            Self::Variable(arg0, arg1) => {
+                f.debug_tuple("Variable").field(arg0).field(arg1).finish()
+            }
             Self::Module => write!(f, "Module"),
         }
     }

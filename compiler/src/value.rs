@@ -29,9 +29,25 @@ pub enum Value {
 }
 
 impl Value {
-    fn can_apply_binary(&self, operator: &Operator, other: &Value) -> bool {
+    pub fn type_from_value(&self) -> Type {
         match self {
-            _ => false,
+            Value::UnsignedInteger(_) => Type::Int(32),
+            Value::SignedInteger(_) => Type::Int(32),
+            Value::Float(_) => Type::Float,
+            Value::Boolean(_) => Type::Bool,
+            Value::Array(vs) => Type::ArrayType(Box::new(vs[0].type_from_value()), Some(vs.len())),
+            Value::String(_) => Type::String,
+            Value::Template(t, vs) => match t {
+                Some(s) => s.clone(),
+                None => {
+                    let mut hsh = HashMap::default();
+                    for ks in vs.iter() {
+                        hsh.insert(ks.0.clone(), (ks.1).type_from_value());
+                    }
+                    Type::UnnamedTemplate(hsh)
+                }
+            },
+            _ => Type::None,
         }
     }
 }

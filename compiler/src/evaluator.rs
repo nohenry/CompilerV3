@@ -90,6 +90,29 @@ impl Evaluator {
 
     fn evaluate_symbols(&mut self, node: &ParseNode) {
         match node {
+            ParseNode::TemplateDecleration(name, fields, generic) => {
+                let fart = cast!(&name.token_type, TokenKind::Ident);
+
+                let symbol = Symbol::insert(
+                    self.current_insert_point.clone(),
+                    fart,
+                    SymbolType::Template,
+                );
+
+                self.push(symbol);
+
+                for arg in fields {
+                    let name = cast!(&arg.0.token_type, TokenKind::Ident);
+
+                    Symbol::insert(
+                        Rc::clone(&self.current_insert_point),
+                        name,
+                        SymbolType::Variable(Value::None, arg.1.clone()),
+                    );
+                }
+
+                self.pop();
+            }
             ParseNode::FunctionDecleration(ident, generic, ftype) => {
                 let fart = cast!(&ident.token_type, TokenKind::Ident);
 
@@ -107,7 +130,7 @@ impl Evaluator {
                     Symbol::insert(
                         Rc::clone(&self.current_insert_point),
                         name,
-                        SymbolType::Variable(Value::None),
+                        SymbolType::Variable(Value::None, arg.1.clone()),
                     );
                 }
 
@@ -130,18 +153,32 @@ impl Evaluator {
                     Symbol::insert(
                         Rc::clone(&self.current_insert_point),
                         name,
-                        SymbolType::Variable(Value::None),
+                        SymbolType::Variable(Value::None, field.1.clone()),
                     );
                 }
             }
             ParseNode::VariableDecleration(ident, variable_type, initializer) => {
                 let fart = cast!(&ident.token_type, TokenKind::Ident);
 
-                Symbol::insert(
-                    self.current_insert_point.clone(),
-                    fart,
-                    SymbolType::Variable(Value::None),
-                );
+                match variable_type {
+                    Some(ty) => {
+                        let ty = cast!(ty.as_ref(), ParseNode::Type);
+                        Symbol::insert(
+                            self.current_insert_point.clone(),
+                            fart,
+                            SymbolType::Variable(Value::None, ty.clone()),
+                        );
+                    }
+                    None => {
+                        let ty = self.evaluate(initializer.as_ref().unwrap());
+                        let ty = ty.type_from_value();
+                        Symbol::insert(
+                            self.current_insert_point.clone(),
+                            fart,
+                            SymbolType::Variable(Value::None, ty),
+                        );
+                    }
+                }
             }
             ParseNode::Block(statements) => {
                 for statement in statements {
@@ -176,7 +213,7 @@ impl Evaluator {
                 }
                 val
             }
-            ParseNode::VariableDecleration(ident, variable_type, initializer) => {
+            ParseNode::VariableDecleration(ident, _, initializer) => {
                 let name = cast!(&ident.token_type, TokenKind::Ident);
                 match initializer {
                     Some(init) => {
@@ -191,7 +228,12 @@ impl Evaluator {
 
                         if let Some(sym) = sym {
                             let init = self.evaluate(init);
-                            sym.borrow_mut().symbol_type = SymbolType::Variable(init);
+                            let ty = {
+                                let old_sym = &sym.borrow().symbol_type;
+                                let ty = cast!(&old_sym, SymbolType::Variable, 2);
+                                ty.1.clone()
+                            };
+                            sym.borrow_mut().symbol_type = SymbolType::Variable(init, ty);
                         }
                     }
                     None => (),
@@ -211,7 +253,7 @@ impl Evaluator {
                 if var.is_some() {
                     let value = var.unwrap().borrow().symbol_type.clone();
                     match value {
-                        SymbolType::Variable(v) => v,
+                        SymbolType::Variable(v, _) => v,
                         SymbolType::Function(_, _) | SymbolType::NativeFunction(_, _, _) => {
                             Value::Identifier(str.clone())
                         }
@@ -278,9 +320,11 @@ impl Evaluator {
                                                 Some(s) => {
                                                     let mut s = s.borrow_mut();
                                                     match &s.symbol_type {
-                                                        SymbolType::Variable(_) => {
-                                                            s.symbol_type =
-                                                                SymbolType::Variable(expr)
+                                                        SymbolType::Variable(_, t) => {
+                                                            s.symbol_type = SymbolType::Variable(
+                                                                expr,
+                                                                t.clone(),
+                                                            )
                                                         }
                                                         _ => (),
                                                     }
@@ -302,11 +346,8 @@ impl Evaluator {
                                             .map(|f| self.evaluate_expression(f))
                                             .collect();
 
-                                        self.push(sym.clone());
-
                                         func(vals);
 
-                                        self.pop();
                                         Value::None
                                     }
                                     _ => Value::None,
@@ -324,7 +365,9 @@ impl Evaluator {
                         let right = self.evaluate_expression(right);
                         match self.evaluate_expression(left) {
                             Value::DeReference(p) => {
-                                p.borrow_mut().symbol_type = SymbolType::Variable(right);
+                                // TODO: check correct types
+                                let ty = right.type_from_value();
+                                p.borrow_mut().symbol_type = SymbolType::Variable(right, ty);
                                 return Value::None;
                             }
                             _ => (),
@@ -338,7 +381,9 @@ impl Evaluator {
                                 let symbol = insert.find(name);
 
                                 symbol.and_then::<(), _>(|f| {
-                                    f.borrow_mut().symbol_type = SymbolType::Variable(right);
+                                    // TODO: check correct type
+                                    let ty = right.type_from_value();
+                                    f.borrow_mut().symbol_type = SymbolType::Variable(right, ty);
                                     None
                                 });
                             }
@@ -346,6 +391,15 @@ impl Evaluator {
                         }
                         return Value::None;
                     }
+                    Operator::Dot => {
+                        // match left.as_ref() {
+                        //     Expression::Identifier(str) => {
+
+                        //     }
+                        //     Expression::BinaryExpression(_, _, _) => self.evaluate_expression(left),
+                        //     _ => ()
+                        // }
+                    },
                     _ => (),
                 }
                 let left = self.evaluate_expression(left);
@@ -450,6 +504,7 @@ impl Evaluator {
                         }
                         _ => Value::None,
                     },
+
                     _ => Value::None,
                 }
             }
@@ -507,6 +562,35 @@ impl Evaluator {
             }
             Literal::String(s) => Value::String(s.clone()),
             Literal::TemplateInitializer(n, f) => {
+                match n {
+                    Some(ttype) => match ttype.as_ref() {
+                        Type::NamedType(t) => {
+                            let name = cast!(&t.token_type, TokenKind::Ident);
+                            let found =
+                                Symbol::find_in_scope(self.current_insert_point.clone(), name);
+                            match found {
+                                Some(sym) => {
+                                    // TODO: check that initilizer values match the structs declaration
+                                    let mut hsh: HashMap<String, Value> = HashMap::default();
+                                    for expr in f {
+                                        hsh.insert(
+                                            expr.0.clone(),
+                                            self.evaluate_expression(&expr.1.as_ref().unwrap()),
+                                        );
+                                    }
+                                    return Value::Template(
+                                        n.as_ref().map(|f| f.as_ref().clone()),
+                                        hsh,
+                                    );
+                                }
+                                None => (),
+                            }
+                        }
+                        _ => (),
+                    },
+                    None => (),
+                }
+
                 let mut hsh: HashMap<String, Value> = HashMap::default();
                 for expr in f {
                     hsh.insert(
@@ -519,4 +603,6 @@ impl Evaluator {
             _ => Value::None,
         }
     }
+
+    // fn evaluate_type(&mut self, eval_type: &Type) -> T
 }

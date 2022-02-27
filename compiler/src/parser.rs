@@ -1,4 +1,5 @@
 use std::{
+    collections::{linked_list::Cursor, LinkedList},
     fmt::{self, Display},
     iter::Peekable,
 };
@@ -83,11 +84,12 @@ impl ParseError {
 //     }
 // }
 
-pub fn parse_from_tokens(tokens: &Vec<Token>) -> Result<ParseNode, ParseError> {
-    let mut it = tokens.iter().peekable();
+pub fn parse_from_tokens(tokens: &LinkedList<&Token>) -> Result<ParseNode, ParseError> {
+    let mut it = tokens.cursor_front();
     let mut statements = vec![];
     let mut current_tags = vec![];
-    while let Some(_) = it.peek() {
+
+    while let Some(_) = it.current() {
         let statement = parse_top_level_statement(&mut it)?;
         match statement {
             ParseNode::Tag(_) => {
@@ -109,10 +111,8 @@ pub fn parse_from_tokens(tokens: &Vec<Token>) -> Result<ParseNode, ParseError> {
     Ok(ParseNode::Block(statements))
 }
 
-fn parse_top_level_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_top_level_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::OpenBracket => parse_tag(tokens),
             TokenKind::Ident(_) => parse_function(tokens),
@@ -123,7 +123,8 @@ fn parse_top_level_statement<'a, T: Iterator<Item = &'a Token>>(
                 Keyword::Template => parse_template(tokens),
                 Keyword::Action => parse_action(tokens),
                 Keyword::Type => {
-                    tokens.next();
+                    // tokens.next();
+                    tokens.move_next();
                     let new_type = parse_type(tokens)?;
                     expect(tokens, TokenKind::Operator(Operator::Assignment))?;
                     let current_type = parse_type(tokens)?;
@@ -137,19 +138,17 @@ fn parse_top_level_statement<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::Keyword(k) => match k {
                 Keyword::Let => parse_variable_decleration(tokens),
                 Keyword::Yield => {
-                    tokens.next();
+                    tokens.move_next();
                     Ok(ParseNode::Yield(Box::new(parse_expression(tokens, 0)?)))
                 }
                 Keyword::Return => {
-                    tokens.next();
+                    tokens.move_next();
                     Ok(ParseNode::Return(Box::new(parse_expression(tokens, 0)?)))
                 }
                 _ => Ok(ParseNode::Expression(parse_expression(tokens, 0)?)),
@@ -161,15 +160,13 @@ fn parse_statement<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_template<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_template(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Template))?;
     let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
     let generic = if let Some(Token {
         token_type: TokenKind::Operator(Operator::Lt),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         Some(Box::new(parse_generic(tokens)?))
     } else {
@@ -178,11 +175,11 @@ fn parse_template<'a, T: Iterator<Item = &'a Token>>(
     expect(tokens, TokenKind::OpenBrace)?;
     let mut fields = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -200,17 +197,15 @@ fn parse_template<'a, T: Iterator<Item = &'a Token>>(
     ))
 }
 
-fn parse_action<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_action(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Action))?;
     let templ_type = parse_type(tokens)?;
-    let spec = match tokens.peek() {
+    let spec = match tokens.current() {
         Some(Token {
             token_type: TokenKind::Colon,
             ..
         }) => {
-            tokens.next();
+            tokens.move_next();
             Some(parse_type(tokens)?)
         }
         _ => None,
@@ -218,17 +213,17 @@ fn parse_action<'a, T: Iterator<Item = &'a Token>>(
     expect(tokens, TokenKind::OpenBrace)?;
     let mut statements = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
         statements.push(parse_action_statement(tokens)?);
 
-        // match tokens.peek() {
+        // match tokens.current() {
         //     Some(t) => match t.token_type {
         //         TokenKind::Comma => tokens.next(),
         //         TokenKind::CloseBrace => {
@@ -252,10 +247,8 @@ fn parse_action<'a, T: Iterator<Item = &'a Token>>(
     ))
 }
 
-fn parse_action_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_action_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::Ident(_) => parse_function(tokens),
             _ => Err(ParseError::new(&format!(
@@ -267,24 +260,24 @@ fn parse_action_statement<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_function_call<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn parse_function_call(
+    tokens: &mut Cursor<&Token>,
     to_be_called: Expression,
 ) -> Result<Expression, ParseError> {
     expect(tokens, TokenKind::OpenParen)?;
     let mut args = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseParen,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
         args.push(parse_expression(tokens, 0)?);
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseParen => {
                     break;
                 }
@@ -301,14 +294,12 @@ fn parse_function_call<'a, T: Iterator<Item = &'a Token>>(
     Ok(Expression::FunctionCall(Box::new(to_be_called), args))
 }
 
-fn parse_function<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_function(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
     let generic = if let Some(Token {
         token_type: TokenKind::Operator(Operator::Lt),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         Some(Box::new(parse_generic(tokens)?))
     } else {
@@ -323,15 +314,13 @@ fn parse_function<'a, T: Iterator<Item = &'a Token>>(
     ))
 }
 
-fn parse_function_type<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<FunctionType, ParseError> {
+fn parse_function_type(tokens: &mut Cursor<&Token>) -> Result<FunctionType, ParseError> {
     let mut params = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseParen,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -340,9 +329,9 @@ fn parse_function_type<'a, T: Iterator<Item = &'a Token>>(
         let parameter_type = parse_type(tokens)?;
         params.push((identifier.clone(), parameter_type));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseParen => {
                     break;
                 }
@@ -366,8 +355,8 @@ fn parse_function_type<'a, T: Iterator<Item = &'a Token>>(
     Ok((params, ret_type, Box::new(body)))
 }
 
-fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn parse_function_type_with_first(
+    tokens: &mut Cursor<&Token>,
     first: &Token,
 ) -> Result<FunctionType, ParseError> {
     let mut params = vec![];
@@ -375,10 +364,10 @@ fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
     expect(tokens, TokenKind::Colon)?;
     let parameter_type = parse_type(tokens)?;
     params.push((first.clone(), parameter_type));
-    match tokens.peek() {
+    match tokens.current() {
         Some(t) => match t.token_type {
-            TokenKind::Comma => tokens.next(),
-            TokenKind::CloseParen => None,
+            TokenKind::Comma => tokens.move_next(),
+            TokenKind::CloseParen => (),
             _ => {
                 return Err(ParseError::new(&format!(
                     "Expected comma or closing parenthesis!"
@@ -388,11 +377,11 @@ fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
         None => return Err(ParseError::new(&format!("Expected token!"))),
     };
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseParen,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -401,9 +390,9 @@ fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
         let parameter_type = parse_type(tokens)?;
         params.push((identifier.clone(), parameter_type));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseParen => {
                     break;
                 }
@@ -427,23 +416,21 @@ fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
     Ok((params, ret_type, Box::new(body)))
 }
 
-fn parse_block_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_block_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::OpenBrace)?;
     let mut statements = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
 
         statements.push(parse_statement(tokens)?);
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::CloseBrace => {
                     break;
@@ -457,14 +444,11 @@ fn parse_block_statement<'a, T: Iterator<Item = &'a Token>>(
     Ok(ParseNode::Block(statements))
 }
 
-fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-    prev_prec: u8,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
+fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expression, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::Keyword(Keyword::If) => {
-                tokens.next(); // eat keyword
+                tokens.move_next(); // eat keyword
                 let condition = parse_expression(tokens, 0)?;
                 let body = parse_block_statement(tokens)?;
 
@@ -477,9 +461,9 @@ fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
                 while let Some(Token {
                     token_type: TokenKind::Keyword(Keyword::Elif),
                     ..
-                }) = tokens.peek()
+                }) = tokens.current()
                 {
-                    tokens.next();
+                    tokens.move_next();
 
                     let condition = parse_expression(tokens, 0)?;
                     let body = parse_block_statement(tokens)?;
@@ -497,9 +481,9 @@ fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
                 if let Some(Token {
                     token_type: TokenKind::Keyword(Keyword::Else),
                     ..
-                }) = tokens.peek()
+                }) = tokens.current()
                 {
-                    tokens.next();
+                    tokens.move_next();
 
                     *insert = Some(Box::new(parse_block_statement(tokens)?));
                 }
@@ -507,11 +491,11 @@ fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
                 Ok(if_expr)
             }
             TokenKind::Keyword(Keyword::Loop) => {
-                tokens.next();
+                tokens.move_next();
                 if let Some(Token {
                     token_type: TokenKind::OpenBrace,
                     ..
-                }) = tokens.peek()
+                }) = tokens.current()
                 {
                     Ok(Expression::LoopExpression(LoopExpression::Infinite(
                         Box::new(parse_block_statement(tokens)?),
@@ -531,18 +515,18 @@ fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn parse_operator_expression(
+    tokens: &mut Cursor<&Token>,
     prev_prec: u8,
 ) -> Result<Expression, ParseError> {
     let mut left = if let Some(Token {
         token_type: TokenKind::Operator(o),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         let uprec = unary_precedence(*o);
         if uprec != 0 && uprec >= prev_prec {
-            tokens.next();
+            tokens.move_next();
             let right = parse_expression(tokens, uprec);
             match right {
                 Ok(n) => Ok(Expression::UnaryExpression(o.clone(), Box::new(n))),
@@ -558,13 +542,13 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
     while let Some(Token {
         token_type: TokenKind::Operator(o),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         let prec = binary_precedence(*o);
         if prec <= prev_prec || prec == 0 {
             break;
         }
-        tokens.next();
+        tokens.move_next();
 
         let right = parse_expression(tokens, prec);
         left = Ok(Expression::BinaryExpression(
@@ -582,13 +566,13 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
             ..
         }),
         Expression::Identifier(t),
-    ) = (tokens.peek(), nleft)
+    ) = (tokens.current(), nleft)
     {
         Ok(Expression::Lambda(parse_function_type_with_first(
             tokens, &t,
         )?))
     } else {
-        while let Some(Token { token_type, .. }) = tokens.peek() {
+        while let Some(Token { token_type, .. }) = tokens.current() {
             let prec = postfix_precedence(token_type);
             if prec <= prev_prec || prec == 0 {
                 break;
@@ -609,27 +593,25 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_variable_decleration<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_variable_decleration(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Let))?;
     let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
-    let var_type = match tokens.peek() {
+    let var_type = match tokens.current() {
         Some(Token {
             token_type: TokenKind::Colon,
             ..
         }) => {
-            tokens.next();
+            tokens.move_next();
             Some(Box::new(ParseNode::Type(parse_type(tokens)?)))
         }
         _ => None,
     };
-    let var_initializer = match tokens.peek() {
+    let var_initializer = match tokens.current() {
         Some(Token {
             token_type: TokenKind::Operator(Operator::Assignment),
             ..
         }) => {
-            tokens.next();
+            tokens.move_next();
             Some(Box::new(ParseNode::Expression(parse_expression(
                 tokens, 0,
             )?)))
@@ -643,25 +625,21 @@ fn parse_variable_decleration<'a, T: Iterator<Item = &'a Token>>(
     ))
 }
 
-fn parse_tag<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_tag(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::OpenBracket)?;
     let expression = parse_expression(tokens, 0)?;
     expect(tokens, TokenKind::CloseBracket)?;
     Ok(ParseNode::Tag(expression))
 }
 
-fn parse_use<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_use(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Use))?;
-    match tokens.peek() {
+    match tokens.current() {
         Some(Token {
             token_type: TokenKind::Keyword(Keyword::Keyword),
             ..
         }) => {
-            tokens.next();
+            tokens.move_next();
             let kw_token = expect(tokens, TokenKind::Ident(String::from("")))?;
             Ok(ParseNode::UseKeyword(kw_token.clone()))
         }
@@ -672,9 +650,7 @@ fn parse_use<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_import<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_import(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Import))?;
     let mut modules = vec![];
     let thing = parse_expression(tokens, 0)?;
@@ -694,9 +670,9 @@ fn parse_import<'a, T: Iterator<Item = &'a Token>>(
     let wildcard = if let Some(Token {
         token_type: TokenKind::Operator(Operator::Wildcard),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
-        tokens.next();
+        tokens.move_next();
         true
     } else {
         false
@@ -704,9 +680,7 @@ fn parse_import<'a, T: Iterator<Item = &'a Token>>(
     Ok(ParseNode::Import(modules, wildcard))
 }
 
-fn parse_include<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_include(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Keyword(Keyword::Include))?;
     let mut modules = vec![];
     let thing = parse_expression(tokens, 0)?;
@@ -727,17 +701,15 @@ fn parse_include<'a, T: Iterator<Item = &'a Token>>(
     Ok(ParseNode::Include(modules))
 }
 
-fn parse_primary<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
+fn parse_primary(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    match tokens.current() {
         Some(t) => match t {
             Token {
                 token_type: TokenKind::OpenParen,
                 ..
             } => {
-                tokens.next();
-                match tokens.peek() {
+                tokens.move_next();
+                match tokens.current() {
                     Some(Token {
                         token_type: TokenKind::CloseParen,
                         ..
@@ -760,16 +732,14 @@ fn parse_primary<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
+fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     expect(tokens, TokenKind::Operator(Operator::Lt))?;
     let mut generic_params = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::Operator(Operator::Gt),
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -779,7 +749,7 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
         let constraints = if let Some(Token {
             token_type: TokenKind::Colon,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             Some(parse_generic_constraints(tokens)?)
         } else {
@@ -787,7 +757,7 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
         };
         generic_params.push((type_param.clone(), constraints));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::Operator(Operator::Gt) => {
                     break;
@@ -801,16 +771,14 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
     Ok(ParseNode::GenericParameters(generic_params))
 }
 
-fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Vec<Type>, ParseError> {
+fn parse_generic_constraints(tokens: &mut Cursor<&Token>) -> Result<Vec<Type>, ParseError> {
     expect(tokens, TokenKind::Colon)?;
     let mut constraints = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::Operator(Operator::Gt),
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -818,10 +786,10 @@ fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
         let constraint_type = parse_type(tokens)?;
         constraints.push(constraint_type);
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::Operator(Operator::BitAnd) => {
-                    tokens.next();
+                    tokens.move_next();
                 }
                 TokenKind::Operator(Operator::Gt) | TokenKind::Comma => break,
                 _ => (),
@@ -832,16 +800,14 @@ fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
     Ok(constraints)
 }
 
-fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
+fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    match tokens.current() {
         Some(t) => match t {
             Token {
                 token_type: TokenKind::Literal(a),
                 ..
             } => {
-                tokens.next();
+                tokens.move_next();
                 Ok(Expression::Literal(a.clone()))
             }
             Token {
@@ -861,11 +827,11 @@ fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
                 ..
             } => match k {
                 Keyword::True => {
-                    tokens.next();
+                    tokens.move_next();
                     Ok(Expression::Literal(Literal::Boolean(true)))
                 }
                 Keyword::False => {
-                    tokens.next();
+                    tokens.move_next();
                     Ok(Expression::Literal(Literal::Boolean(false)))
                 }
                 _ => Err(ParseError::new(&format!(
@@ -879,14 +845,12 @@ fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_ident<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
+fn parse_ident(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
     let possible_type = parse_type(tokens)?;
     if let Some(Token {
         token_type: TokenKind::OpenBrace,
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         parse_template_initializer(tokens, Some(Box::new(possible_type)))
     } else {
@@ -900,18 +864,18 @@ fn parse_ident<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn parse_template_initializer(
+    tokens: &mut Cursor<&Token>,
     struct_type: Option<Box<Type>>,
 ) -> Result<Expression, ParseError> {
     expect(tokens, TokenKind::OpenBrace)?;
     let mut key_values = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -923,18 +887,18 @@ fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
         let value = if let Some(Token {
             token_type: TokenKind::Colon,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
-            tokens.next();
+            tokens.move_next();
             Some(parse_expression(tokens, 0)?)
         } else {
             None
         };
         key_values.push((key_string, value));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseBrace => {
                     break;
                 }
@@ -956,24 +920,22 @@ fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
     )))
 }
 
-fn parse_array_literal<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
+fn parse_array_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
     expect(tokens, TokenKind::OpenBracket)?;
     let mut values = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBracket,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
         let value = parse_expression(tokens, 0)?;
         values.push(value);
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseBracket => {
                     break;
                 }
@@ -991,19 +953,17 @@ fn parse_array_literal<'a, T: Iterator<Item = &'a Token>>(
     Ok(Expression::Literal(Literal::Array(values)))
 }
 
-fn parse_type<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Type, ParseError> {
-    match tokens.peek() {
+fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
+    match tokens.current() {
         Some(t) => {
             let result = match t.token_type {
                 TokenKind::Ident(_) => {
                     let token = (*t).clone();
-                    tokens.next();
+                    tokens.move_next();
                     Ok(Type::NamedType(token))
                 }
                 TokenKind::Keyword(k) => {
-                    tokens.next();
+                    tokens.move_next();
                     match k {
                         Keyword::Int => Ok(Type::Int(8)),
                         Keyword::Uint => Ok(Type::Uint(8)),
@@ -1014,14 +974,14 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     }
                 }
                 TokenKind::OpenBracket => {
-                    tokens.next();
+                    tokens.move_next();
                     let array_type = parse_type(tokens)?;
                     let size = if let Some(Token {
                         token_type: TokenKind::Colon,
                         ..
-                    }) = tokens.peek()
+                    }) = tokens.current()
                     {
-                        tokens.next();
+                        tokens.move_next();
                         let size = expect(tokens, TokenKind::Literal(Literal::Integer(0, 0)))?;
                         let numeric_size = match size {
                             Token {
@@ -1041,24 +1001,24 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     Ok(Type::ArrayType(Box::new(array_type), size))
                 }
                 TokenKind::OpenParen => {
-                    tokens.next();
+                    tokens.move_next();
                     let mut parameters = vec![];
-                    while let Some(_) = tokens.peek() {
+                    while let Some(_) = tokens.current() {
                         if let Some(Token {
                             token_type: TokenKind::CloseParen,
                             ..
-                        }) = tokens.peek()
+                        }) = tokens.current()
                         {
                             break;
                         }
                         let parameter_type = parse_type(tokens)?;
                         parameters.push(parameter_type);
 
-                        match tokens.peek() {
+                        match tokens.current() {
                             Some(t) => match t.token_type {
-                                TokenKind::Comma => tokens.next(),
+                                TokenKind::Comma => tokens.move_next(),
                                 TokenKind::CloseParen => {
-                                    tokens.next();
+                                    tokens.move_next();
                                     break;
                                 }
                                 _ => {
@@ -1074,9 +1034,9 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     let ret_type = if let Some(Token {
                         token_type: TokenKind::Operator(Operator::Arrow),
                         ..
-                    }) = tokens.peek()
+                    }) = tokens.current()
                     {
-                        tokens.next();
+                        tokens.move_next();
                         parse_type(tokens)?
                     } else {
                         Type::Unit
@@ -1084,7 +1044,7 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     Ok(Type::FunctionType(parameters, Box::new(ret_type)))
                 }
                 TokenKind::Operator(Operator::BitAnd) => {
-                    tokens.next();
+                    tokens.move_next();
                     Ok(Type::ReferenceType(Box::new(parse_type(tokens)?)))
                 }
                 _ => Err(ParseError::new(&format!("{:?} is not a valid type!", t))),
@@ -1092,15 +1052,26 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
             if let Some(Token {
                 token_type: TokenKind::Operator(Operator::Lt),
                 ..
-            }) = tokens.peek()
+            }) = tokens.current()
             {
-                tokens.next();
+                tokens.move_next();
+                match tokens.peek_next() {
+                    Some(s) => {
+                        if s.token_type != TokenKind::Operator(Operator::Gt)
+                            && s.token_type != TokenKind::Operator(Operator::Lt)
+                        {
+                            tokens.move_prev();
+                            return result;
+                        }
+                    }
+                    None => (),
+                }
                 let mut type_arguments = vec![];
-                while let Some(_) = tokens.peek() {
+                while let Some(_) = tokens.current() {
                     if let Some(Token {
                         token_type: TokenKind::Operator(Operator::Gt),
                         ..
-                    }) = tokens.peek()
+                    }) = tokens.current()
                     {
                         break;
                     }
@@ -1108,9 +1079,9 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     let arg_type = parse_type(tokens)?;
                     type_arguments.push(arg_type);
 
-                    match tokens.peek() {
+                    match tokens.current() {
                         Some(t) => match t.token_type {
-                            TokenKind::Comma => tokens.next(),
+                            TokenKind::Comma => tokens.move_next(),
                             TokenKind::Operator(Operator::Gt) => {
                                 break;
                             }
@@ -1176,21 +1147,28 @@ fn postfix_precedence(token: &TokenKind) -> u8 {
     }
 }
 
-fn expect<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn expect<'a>(
+    tokens: &mut Cursor<&'a Token>,
     token_type: TokenKind,
 ) -> Result<&'a Token, ParseError> {
-    match tokens.next() {
+    match tokens.current() {
         Some(t) if std::mem::discriminant(&t.token_type) == std::mem::discriminant(&token_type) => {
+            tokens.move_next();
             Ok(t)
         }
-        Some(t) => Err(ParseError::new(&format!(
-            "Expected token {:?}, found token {:?}",
-            token_type, t.token_type
-        ))),
-        None => Err(ParseError::new(&format!(
-            "Expected token {:?} ",
-            token_type
-        ))),
+        Some(t) => {
+            tokens.move_next();
+            Err(ParseError::new(&format!(
+                "Expected token {:?}, found token {:?}",
+                token_type, t.token_type
+            )))
+        }
+        None => {
+            tokens.move_next();
+            Err(ParseError::new(&format!(
+                "Expected token {:?} ",
+                token_type
+            )))
+        }
     }
 }

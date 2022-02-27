@@ -1,12 +1,13 @@
-
-do_something(value: int) => {
-    let potato = value
+template Data {
+    x: int
+    y: int
 }
 
 main() => {
-    let i = 0
-    loop i < 10 {
-        println("Potato")
-        i = i + 1
-    } 
+    let data = Data {
+        x: 10,
+        y: 10
+    }
+
+    let x = data.x.y
 }
