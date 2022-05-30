@@ -1,5 +1,5 @@
 
-do_something() => {
-    let func = (f: int, a: uint) => {
-    }
+main() => {
+    let d = 5
+    d = 4
 }

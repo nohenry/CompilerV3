@@ -1,4 +1,10 @@
-use crate::lexer::{OperatorKind, Range, Token};
+use std::fmt::Display;
+
+use crate::{
+    cast,
+    lexer::{default_range, OperatorKind, Range, Token, TokenKind},
+    parser::ParseError,
+};
 
 // pub struct VariableDecleration {
 //     identifier: String,
@@ -13,7 +19,7 @@ use crate::lexer::{OperatorKind, Range, Token};
 //     right: Box<ParseNode>,
 // }
 #[derive(Debug, Clone, PartialEq)]
-pub enum LoopExpression {
+pub enum Loop {
     Infinite(/* Body */ Box<ParseNode>),
     Until(
         /* Condition */ Box<Expression>,
@@ -22,38 +28,61 @@ pub enum LoopExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct LoopExpression {
+    pub keyword: Range,
+    pub loop_type: Loop,
+    pub range: Range,
+}
+
+impl Loop {
+    pub fn get_range(&self) -> Range {
+        match self {
+            Loop::Infinite(b) => b.get_range(),
+            Loop::Until(e, b) => (e.get_range().0, b.get_range().1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpression {
-    left: Box<Expression>,
-    operator: OperatorKind,
-    right: Box<Expression>,
-    range: Range,
+    pub left: Box<Expression>,
+    pub operator: OperatorKind,
+    pub right: Box<Expression>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpression {
-    expression: Box<Expression>,
-    operator: OperatorKind,
-    range: Range,
+    pub expression: Box<Expression>,
+    pub operator: OperatorKind,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfExpression {
-    if_token: Range,
-    condition: Box<Expression>,
-    body: Box<ParseNode>,
-    else_clause: Option<(
+    pub if_token: Range,
+    pub condition: Box<Expression>,
+    pub body: Box<ParseNode>,
+    pub else_clause: Option<(
         /* else token */ Range,
         /* else clause body*/ Box<ParseNode>,
     )>,
-    range: Range,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionCall {
-    expression_to_call: Box<Expression>,
-    arguments: Vec<ParseNode>,
-    paren_tokens: Range,
-    range: Range,
+    pub expression_to_call: Box<Expression>,
+    pub arguments: Vec<Expression>,
+    pub paren_tokens: Range,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpressionIndex {
+    pub index_expression: Box<Expression>,
+    pub index_value: Box<Expression>,
+    pub square_range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,14 +91,28 @@ pub enum Expression {
     Literal(Literal),
     BinaryExpression(BinaryExpression),
     UnaryExpression(UnaryExpression),
-    LoopExpression(LoopExpression),
-    IfExpression(IfExpression),
     FunctionCall(FunctionCall),
-    Lambda(FunctionSignature),
-    Index(
-        /* Indexable value */ Box<Expression>,
-        /* Value indexing */ Box<Expression>,
-    ),
+    Lambda(FunctionSignature, Box<ParseNode>),
+    Index(ExpressionIndex),
+
+    IfExpression(IfExpression),
+    LoopExpression(LoopExpression),
+}
+
+impl Expression {
+    pub fn get_range(&self) -> Range {
+        match self {
+            Expression::Identifier(t) => t.range,
+            Expression::Literal(t) => t.get_range(),
+            Expression::BinaryExpression(t) => t.range,
+            Expression::UnaryExpression(t) => t.range,
+            Expression::FunctionCall(t) => t.range,
+            Expression::Lambda(t, b) => t.range,
+            Expression::Index(t) => (t.index_expression.get_range().0, t.square_range.1),
+            Expression::IfExpression(t) => (t.range),
+            Expression::LoopExpression(t) => (t.range),
+        }
+    }
 }
 
 // #[derive(Debug, Clone, PartialEq)]
@@ -80,58 +123,83 @@ pub enum Expression {
 
 #[derive(Debug, Clone, PartialEq)]
 struct IdentSymbol {
-    identifier: Token,
+    pub identifier: Token,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TypeSymbol {
-    symbol: Box<ParseNode>,
-    colon: Range,
-    symbol_type: Type,
+pub struct TypeSymbol {
+    pub symbol_type: Type,
+    pub symbol: Token,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSignature {
-    parameters: Vec<ParseNode>,
-    type_arrow: Option<Punctuation>,
-    return_type: Box<Type>,
-    range: Range,
+    pub parameters: Vec<TypeSymbol>,
+    pub return_type: Box<Type>,
+    pub parens: Range,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionType {
+    pub parameters: Vec<Type>,
+    pub return_type: Box<Type>,
+    pub parens: Range,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayType {
-    base_type: Box<Type>,
-    size: Option<(/* Colon */ Range, /* Size */ usize)>,
-    range: Range,
+    pub base_type: Box<Type>,
+    pub size: Option<(/* Colon */ Range, /* Size */ usize)>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReferenceType {
-    reference: Range,
-    base_type: Box<Type>,
-    range: Range,
+    pub reference: Range,
+    pub base_type: Box<Type>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericType {
-    base_type: Box<Type>,
-    arguments: Vec<ParseNode>,
-    range: Range,
+    pub base_type: Box<Type>,
+    pub arguments: Vec<Type>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    Unit(Range),
+    Unit,
     NamedType(Token),
     Int(u8, Range),
     Uint(u8, Range),
     Bool(Range),
-    Float(Range),
+    Float(u8, Range),
     Char(Range),
     ArrayType(ArrayType),
-    FunctionType(FunctionSignature),
+    FunctionType(FunctionType),
     ReferenceType(ReferenceType),
     GenericType(GenericType),
+}
+
+impl Type {
+    pub fn get_range(&self) -> Range {
+        match self {
+            Type::Unit => default_range(),
+            Type::NamedType(t) => t.range,
+            Type::Int(_, t) => t.clone(),
+            Type::Uint(_, t) => t.clone(),
+            Type::Bool(t) => t.clone(),
+            Type::Float(_, t) => t.clone(),
+            Type::Char(t) => t.clone(),
+            Type::ArrayType(t) => t.range,
+            Type::FunctionType(t) => t.range,
+            Type::ReferenceType(t) => t.range,
+            Type::GenericType(t) => t.range,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,71 +210,113 @@ pub enum Punctuation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableDecleration {
-    let_token: Range,
-    symbol: Box<ParseNode>,
-    possible_initializer: Option<(
+    pub variable_type: Option<Box<Type>>,
+    pub identifier: Token,
+    pub possible_initializer: Option<(
         /* Initializer */ Box<Expression>,
         /* Position of assignment operator*/ Range,
     )>,
-    range: Range,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecleration {
-    identifier: Token,
-    possible_generic: Option<(Box<ParseNode>,)>,
-    function_type: FunctionSignature,
-    body: Box<ParseNode>,
-    range: Range,
+    pub identifier: Token,
+    pub function_type: FunctionSignature,
+    pub body: Box<ParseNode>,
+    pub generic: Option<Box<ParseNode>>,
+    pub range: Range,
+}
+
+impl FunctionDecleration {
+    fn write(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        index: u32,
+        indent: &String,
+        last: bool,
+    ) -> std::fmt::Result {
+        let name = cast!(&self.identifier.token_type, TokenKind::Ident);
+        // let nindent = format!(
+        //     "{}{}",
+        //     indent,
+        //     if index == 0 {
+        //         ""
+        //     } else if last {
+        //         "    "
+        //     } else {
+        //         "│   "
+        //     }
+        // );
+        writeln!(
+            f,
+            "Function: {} => {:?}",
+            name, self.function_type.return_type
+        )?;
+        self.body.write(f, index + 1, indent, last)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateDecleration {
-    struct_keyword: Range,
-    token: Token,
-    fields: Vec<TypeSymbol>,
-    generic: Option<Box<ParseNode>>,
-    range: Range,
+    pub struct_keyword: Range,
+    pub token: Token,
+    pub fields: Vec<TypeSymbol>,
+    pub generic: Option<Box<ParseNode>>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecleration {
-    type_keyword: Range,
-    token: Token,
-    old_type: Type,
-    assignment: Range,
-    generic: Option<Box<ParseNode>>,
-    range: Range,
+    pub type_keyword: Range,
+    pub token: Token,
+    pub old_type: Type,
+    pub assignment: Range,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActionDecleration {
-    action_keyword: Range,
-    template_type: Type,
-    generic: Option<Box<ParseNode>>,
-    specification: Option<(Range, Type)>,
-    range: Range,
+    pub action_keyword: Range,
+    pub template_type: Type,
+    pub generic: Option<Box<ParseNode>>,
+    pub specification: Option<Type>,
+    pub body: Box<ParseNode>,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecDecleration {
+    pub spec_keyword: Range,
+    pub identifier: Token,
+    pub generic: Option<Box<ParseNode>>,
+    pub body: Vec<SpecBody>,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpecBody {
+    Function(Token, FunctionSignature)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericEntry {
-    token: Token,
-    constraints: Option<Vec<ParseNode>>,
-    range: Range,
+    pub token: Token,
+    pub constraints: Option<Vec<ParseNode>>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParameters {
-    parameters: Vec<ParseNode>,
-    range: Range,
+    pub parameters: Vec<(Token, Option<Vec<Type>>)>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecleration {
-    import_keyword: Range,
-    path: Vec<Expression>,
-    wildcard: bool,
-    range: Range,
+    pub import_keyword: Range,
+    pub path: Vec<Expression>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,31 +327,114 @@ pub enum ParseNode {
     VariableDecleration(VariableDecleration),
     FunctionDecleration(FunctionDecleration),
     Block(/* Statements */ Vec<ParseNode>, Range),
-    Yield(Box<Expression>, Range, Range),
-    Return(Box<Expression>, Range, Range),
+    Yield(Box<Expression>, Range),
+    Return(Box<Expression>, Range),
     TemplateDecleration(TemplateDecleration),
     TypeDecleration(TypeDecleration),
     ActionDecleration(ActionDecleration),
+    SpecDecleration(SpecDecleration),
     GenericParameters(GenericParameters),
     Tag(/* Expression of tag */ Expression, Range),
-    TagCollection(Vec<ParseNode>, Option<Box<ParseNode>>, Range),
+    TagCollection(Vec<ParseNode>, Box<ParseNode>, Range),
     Import(ImportDecleration),
     Punctuation(Punctuation, Range),
 }
 
+impl ParseNode {
+    pub fn get_range(&self) -> Range {
+        match self {
+            ParseNode::Expression(_, r) => r.clone(),
+            ParseNode::Type(_, r) => r.clone(),
+            ParseNode::VariableDecleration(v) => v.range,
+            ParseNode::FunctionDecleration(f) => f.range,
+            ParseNode::Block(_, f) => f.clone(),
+            ParseNode::Yield(_, f) => f.clone(),
+            ParseNode::Return(_, f) => f.clone(),
+            ParseNode::TemplateDecleration(s) => s.range,
+            ParseNode::TypeDecleration(t) => t.range,
+            ParseNode::ActionDecleration(l) => l.range,
+            ParseNode::SpecDecleration(l) => l.range,
+            ParseNode::GenericParameters(l) => l.range,
+            ParseNode::Tag(_, r) => r.clone(),
+            ParseNode::TagCollection(_, _, r) => r.clone(),
+            ParseNode::Import(i) => i.range,
+            ParseNode::Punctuation(_, p) => p.clone(),
+
+            ParseNode::None => default_range(),
+        }
+    }
+}
+
+impl Display for ParseNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write(f, 0, &"".to_string(), false)
+    }
+}
+
+impl ParseNode {
+    fn write(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        index: u32,
+        indent: &String,
+        last: bool,
+    ) -> std::fmt::Result {
+        write!(f, "{}", indent)?;
+        if index != 0 {
+            write!(f, "{}", if last { "└──" } else { "├──" })?;
+        }
+        let nindent = format!(
+            "{}{}",
+            indent,
+            if index == 0 {
+                ""
+            } else if last {
+                "    "
+            } else {
+                "│   "
+            }
+        );
+        let res = match self {
+            ParseNode::Expression(e, _) => write!(f, "{:?}", e),
+            ParseNode::Type(e, _) => write!(f, "{:?}", e),
+            ParseNode::VariableDecleration(e) => write!(f, "{:?}", e),
+            ParseNode::FunctionDecleration(e) => e.write(f, index + 1, &nindent, true),
+            ParseNode::Block(e, _) => {
+                write!(f, "Block\n")?;
+                e.iter().enumerate().for_each(|(i, v)| {
+                    ParseNode::write(v, f, index + 1, &nindent, i == e.len() - 1).unwrap();
+                });
+                Ok(())
+            }
+            ParseNode::Yield(e, _) => write!(f, "Yield {:?}", e),
+            ParseNode::Return(e, _) => write!(f, "Return {:?}", e),
+            ParseNode::TemplateDecleration(e) => write!(f, "{:?}", e),
+            ParseNode::TypeDecleration(e) => write!(f, "{:?}", e),
+            ParseNode::ActionDecleration(e) => write!(f, "{:?}", e),
+            ParseNode::SpecDecleration(e) => write!(f, "{:?}", e),
+            ParseNode::GenericParameters(e) => write!(f, "{:?}", e),
+            ParseNode::Tag(e, _) => write!(f, "{:?}", e),
+            ParseNode::TagCollection(e, s, _) => write!(f, "Tag Collection: {:?} => {:?}", e, s),
+            ParseNode::Import(e) => write!(f, "{:?}", e),
+            ParseNode::Punctuation(e, _) => write!(f, "{:?}", e),
+            ParseNode::None => write!(f, "None"),
+        };
+        write!(f, "\n")?;
+        res
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayInitializer {
-    elements: Vec<ParseNode>,
-    bracket_token: Range,
-    range: Range,
+    pub elements: Vec<Expression>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateInitializer {
-    named_type: Option<Box<Type>>,
-    initializer_values: Vec<(String, Option<Expression>)>,
-    brace_token: Range,
-    range: Range,
+    pub named_type: Option<Box<Type>>,
+    pub initializer_values: Vec<(String, Option<Expression>)>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +446,20 @@ pub enum Literal {
 
     // The following varients are formed in the parser
     Array(ArrayInitializer),
-    TemplateInitializer(TemplateInitializer),
+    StructInitializer(TemplateInitializer),
     String(String, Range),
+}
+
+impl Literal {
+    pub fn get_range(&self) -> Range {
+        match self {
+            Literal::Integer(_, _, r) => r.clone(),
+            Literal::Float(_, r) => r.clone(),
+            Literal::Boolean(_, r) => r.clone(),
+            Literal::Array(r) => r.range.clone(),
+            Literal::StructInitializer(r) => r.range.clone(),
+            Literal::String(_, r) => r.clone(),
+            Literal::Empty => default_range(),
+        }
+    }
 }

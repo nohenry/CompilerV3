@@ -6,7 +6,7 @@ pub struct TrieNode<T>
 where
     T: Debug + Copy,
 {
-    children: [Option<Box<TrieNode<T>>>; 26],
+    children: [Option<Box<TrieNode<T>>>; 36],
     // is_endpoint: bool,
     keyword: Option<T>,
 }
@@ -15,9 +15,11 @@ impl<T> TrieNode<T>
 where
     T: Debug + Copy,
 {
+    const INIT: Option<Box<TrieNode<T>>> = None;
+
     pub fn new() -> Self {
         TrieNode {
-            children: Default::default(),
+            children: [TrieNode::INIT; 36],
             keyword: None,
         }
     }
@@ -34,13 +36,17 @@ where
     }
 
     pub fn insert(&mut self, value: u8, keyword: Option<T>) -> &mut Box<TrieNode<T>> {
-        let index = value as usize - 'a' as usize;
+        let index = if (value as usize) < ('9' as usize) {
+            value as usize - '0' as usize + 26
+        } else {
+            value as usize - 'a' as usize
+        };
         let found = &mut self.children[index];
         match found {
             Some(b) => b.keyword = keyword,
             None => {
                 let b = Box::new(TrieNode {
-                    children: Default::default(),
+                    children: [TrieNode::INIT; 36],
                     keyword, // is_endpoint: endpoint,
                 });
                 self.children[index] = Some(b);
@@ -53,7 +59,12 @@ where
     }
 
     pub fn next(&self, c: char) -> Option<&TrieNode<T>> {
-        match &self.children[c as usize - 'a' as usize] {
+        let index = if (c as usize) < ('9' as usize) {
+            c as usize - '0' as usize + 26
+        } else {
+            c as usize - 'a' as usize
+        };
+        match &self.children[index] {
             Some(s) => Some(s.as_ref()),
             None => None,
         }

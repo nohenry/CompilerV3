@@ -1,11 +1,18 @@
 use std::{
-    fmt::{self, Display},
-    iter::Peekable,
+    collections::{linked_list::Cursor, LinkedList},
+    fmt,
 };
 
 use crate::{
-    ast::{Expression, Literal, LoopExpression, ParseNode, Type},
-    lexer::{KeywordKind, OperatorKind, Token, TokenKind},
+    ast::{
+        ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression,
+        ExpressionIndex, FunctionCall, FunctionDecleration, FunctionSignature, FunctionType,
+        GenericParameters, GenericType, IfExpression, ImportDecleration, Literal, Loop,
+        LoopExpression, ParseNode, ReferenceType, SpecBody, SpecDecleration, TemplateDecleration,
+        TemplateInitializer, Type, TypeDecleration, TypeSymbol, UnaryExpression,
+        VariableDecleration,
+    },
+    lexer::{default_range, Keyword, KeywordKind, Operator, OperatorKind, Token, TokenKind},
 };
 
 #[derive(Debug)]
@@ -27,76 +34,32 @@ impl ParseError {
     }
 }
 
-// #[derive(Debug)]
-// pub struct ParseNode {
-//     pub children: Vec<ParseNode>,
-//     pub entry: GrammarItem,
-// }
-
-// impl Display for ParseNode {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.output(f, 0, &"".to_string(), false)
-//     }
-// }
-
-// impl ParseNode {
-//     pub fn is_constant(&self) -> bool {
-//         match self.entry {
-//             GrammarItem::Literal(_) => true,
-//             GrammarItem::Identifier(_) => false,
-//             GrammarItem::Operator(o) => match o {
-//                 Operator::Mult => self.children[0].is_constant() && self.children[1].is_constant(),
-//                 _ => false,
-//             },
-//             _ => false,
-//         }
-//     }
-
-//     fn output(
-//         &self,
-//         f: &mut std::fmt::Formatter<'_>,
-//         index: u32,
-//         indent: &String,
-//         last: bool,
-//     ) -> std::fmt::Result {
-//         write!(f, "{}", indent)?;
-//         if index != 0 {
-//             write!(f, "{}", if last { "└──" } else { "├──" })?;
-//         }
-//         write!(f, "{:?}\n", self.entry)?;
-//         let nindent = format!(
-//             "{}{}",
-//             indent,
-//             if index == 0 {
-//                 ""
-//             } else if last {
-//                 "    "
-//             } else {
-//                 "│   "
-//             }
-//         );
-//         self.children.iter().enumerate().for_each(|(i, v)| {
-//             ParseNode::output(v, f, index + 1, &nindent, i == self.children.len() - 1).unwrap();
-//         });
-//         Ok(())
-//     }
-// }
-
-pub fn parse_from_tokens(tokens: &Vec<Token>) -> Result<ParseNode, ParseError> {
-    let mut it = tokens.iter().peekable();
+pub fn parse_from_tokens(tokens: &LinkedList<&Token>) -> Result<ParseNode, ParseError> {
+    let mut it = tokens.cursor_front();
     let mut statements = vec![];
     let mut current_tags = vec![];
-    while let Some(_) = it.peek() {
+
+    let start = if let Some(t) = it.current() {
+        t.range
+    } else {
+        default_range()
+    };
+
+    while let Some(_) = it.current() {
         let statement = parse_top_level_statement(&mut it)?;
         match statement {
-            ParseNode::Tag(_) => {
+            ParseNode::Tag(_, _) => {
                 current_tags.push(statement);
             }
             _ => {
                 if current_tags.len() > 0 {
                     statements.push(ParseNode::TagCollection(
                         current_tags.clone(),
-                        Some(Box::new(statement)),
+                        Box::new(statement),
+                        (
+                            current_tags[0].get_range().0,
+                            current_tags[current_tags.len() - 1].get_range().1,
+                        ),
                     ));
                     current_tags.clear();
                 } else {
@@ -105,121 +68,182 @@ pub fn parse_from_tokens(tokens: &Vec<Token>) -> Result<ParseNode, ParseError> {
             }
         }
     }
-    Ok(ParseNode::Block(statements))
+
+    let end = if let Some(t) = it.current() {
+        t.range
+    } else if let Some(t) = it.back() {
+        t.range
+    } else {
+        default_range()
+    };
+    Ok(ParseNode::Block(statements, (start.0, end.1)))
 }
 
-fn parse_top_level_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_top_level_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::OpenBracket => parse_tag(tokens),
-            TokenKind::Ident(_) => parse_function(tokens),
-            TokenKind::Keyword(k) => match k {
-                KeywordKind::Import => parse_import(tokens),
+            TokenKind::Keyword(k) => match k.keyword {
+                KeywordKind::Import => {
+                    let res = parse_import(tokens);
+                    res
+                }
+                KeywordKind::Type => {
+                    tokens.move_next();
+                    let new_type = expect(tokens, TokenKind::Ident(String::from("")))?;
+                    let eq = expect(tokens, Operator::create_expect(OperatorKind::Assignment))?;
+                    let current_type = parse_type(tokens)?;
+
+                    let end = current_type.get_range().1;
+
+                    let td = TypeDecleration {
+                        type_keyword: t.range,
+                        token: new_type.clone(),
+                        old_type: current_type,
+                        assignment: eq.range,
+                        range: (t.range.0, end),
+                    };
+
+                    Ok(ParseNode::TypeDecleration(td))
+                }
                 KeywordKind::Template => parse_template(tokens),
                 KeywordKind::Action => parse_action(tokens),
-                KeywordKind::Type => {
-                    tokens.next();
-                    let new_type = parse_type(tokens)?;
-                    expect(tokens, TokenKind::Operator(OperatorKind::Assignment))?;
-                    let current_type = parse_type(tokens)?;
-                    Ok(ParseNode::TypeDecleration(new_type, current_type))
-                }
+                KeywordKind::Spec => parse_spec(tokens),
                 _ => Err(ParseError::new(&format!("Unexpected keyword {:?}", t))),
             },
+            TokenKind::Ident(_) => Ok(parse_function(tokens)?),
             _ => Err(ParseError::new(&format!("Unexpected token {:?}", t))),
         },
         None => Ok(ParseNode::None),
     }
 }
 
-fn parse_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
-            TokenKind::Keyword(k) => match k {
+            TokenKind::Keyword(k) => match k.keyword {
                 KeywordKind::Let => parse_variable_decleration(tokens),
                 KeywordKind::Yield => {
-                    tokens.next();
-                    Ok(ParseNode::Yield(Box::new(parse_expression(tokens, 0)?)))
+                    let tok = tokens.current().unwrap();
+                    tokens.move_next();
+                    Ok(ParseNode::Yield(
+                        Box::new(parse_expression(tokens, 0)?),
+                        tok.range,
+                    ))
                 }
                 KeywordKind::Return => {
-                    tokens.next();
-                    Ok(ParseNode::Return(Box::new(parse_expression(tokens, 0)?)))
+                    let tok = tokens.current().unwrap();
+                    tokens.move_next();
+                    Ok(ParseNode::Return(
+                        Box::new(parse_expression(tokens, 0)?),
+                        tok.range,
+                    ))
                 }
-                _ => Ok(ParseNode::Expression(parse_expression(tokens, 0)?)),
+                _ => {
+                    let expr = parse_expression(tokens, 0)?;
+                    // expect(tokens, TokenKind::Semi)?;
+                    let rng = expr.get_range();
+                    Ok(ParseNode::Expression(expr, rng))
+                }
             },
             TokenKind::OpenBrace => parse_block_statement(tokens),
-            _ => Ok(ParseNode::Expression(parse_expression(tokens, 0)?)),
+            _ => {
+                let expr = parse_expression(tokens, 0)?;
+                // expect(tokens, TokenKind::Semi)?;
+                let rng = expr.get_range();
+                Ok(ParseNode::Expression(expr, rng))
+            }
         },
         None => Ok(ParseNode::None),
     }
 }
 
-fn parse_template<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::Keyword(KeywordKind::Template))?;
+fn parse_template(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let kw = expect(tokens, Keyword::create_expect(KeywordKind::Template))?;
     let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
     let generic = if let Some(Token {
-        token_type: TokenKind::Operator(OperatorKind::Lt),
+        token_type:
+            TokenKind::Operator(Operator {
+                operator: OperatorKind::Lt,
+                ..
+            }),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         Some(Box::new(parse_generic(tokens)?))
     } else {
         None
     };
-    expect(tokens, TokenKind::OpenBrace)?;
+
+    let ob = expect(tokens, TokenKind::OpenBrace)?;
     let mut fields = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
+
         let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
         expect(tokens, TokenKind::Colon)?;
         let field_type = parse_type(tokens)?;
-        fields.push((identifier.clone(), field_type));
+
+        let ts = TypeSymbol {
+            symbol_type: field_type,
+            symbol: identifier.clone(),
+        };
+        fields.push(ts);
     }
 
-    expect(tokens, TokenKind::CloseBrace)?;
-    Ok(ParseNode::TemplateDecleration(
-        identifier.clone(),
+    let cb = expect(tokens, TokenKind::CloseBrace)?;
+    let sd = TemplateDecleration {
+        struct_keyword: kw.clone().range,
+        token: identifier.clone(),
         fields,
         generic,
-    ))
+        range: (kw.range.0, cb.range.1),
+    };
+    Ok(ParseNode::TemplateDecleration(sd))
 }
 
-fn parse_action<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::Keyword(KeywordKind::Action))?;
-    let templ_type = parse_type(tokens)?;
-    let spec = match tokens.peek() {
+fn parse_action(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let keyword = expect(tokens, Keyword::create_expect(KeywordKind::Action))?;
+    let generic = if let Some(Token {
+        token_type:
+            TokenKind::Operator(Operator {
+                operator: OperatorKind::Lt,
+                ..
+            }),
+        ..
+    }) = tokens.current()
+    {
+        Some(Box::new(parse_generic(tokens)?))
+    } else {
+        None
+    };
+
+    let template_type = parse_type(tokens)?;
+    let spec = match tokens.current() {
         Some(Token {
             token_type: TokenKind::Colon,
             ..
         }) => {
-            tokens.next();
+            tokens.move_next();
             Some(parse_type(tokens)?)
         }
         _ => None,
     };
-    expect(tokens, TokenKind::OpenBrace)?;
+    let left = expect(tokens, TokenKind::OpenBrace)?;
     let mut statements = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -241,18 +265,19 @@ fn parse_action<'a, T: Iterator<Item = &'a Token>>(
         // };
     }
 
-    expect(tokens, TokenKind::CloseBrace)?;
-    Ok(ParseNode::ActionDecleration(
-        templ_type,
-        spec,
-        Box::new(ParseNode::Block(statements)),
-    ))
+    let right = expect(tokens, TokenKind::CloseBrace)?;
+    Ok(ParseNode::ActionDecleration(ActionDecleration {
+        action_keyword: keyword.range,
+        template_type,
+        generic,
+        specification: spec,
+        body: Box::new(ParseNode::Block(statements, (left.range.0, right.range.1))),
+        range: (keyword.range.0, right.range.1),
+    }))
 }
 
-fn parse_action_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    match tokens.peek() {
+fn parse_action_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    match tokens.current() {
         Some(t) => match t.token_type {
             TokenKind::Ident(_) => parse_function(tokens),
             _ => Err(ParseError::new(&format!(
@@ -264,183 +289,253 @@ fn parse_action_statement<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_function_call<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-    to_be_called: Expression,
-) -> Result<Expression, ParseError> {
-    expect(tokens, TokenKind::OpenParen)?;
-    let mut args = vec![];
-    while let Some(_) = tokens.peek() {
-        if let Some(Token {
-            token_type: TokenKind::CloseParen,
-            ..
-        }) = tokens.peek()
-        {
-            break;
-        }
-        args.push(parse_expression(tokens, 0)?);
-        match tokens.peek() {
-            Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
-                TokenKind::CloseParen => {
-                    break;
-                }
-                _ => {
-                    return Err(ParseError::new(&format!(
-                        "Expected comma or closing parenthesis!"
-                    )))
-                }
-            },
-            None => return Err(ParseError::new(&format!("Expected token!"))),
-        };
-    }
-    expect(tokens, TokenKind::CloseParen)?;
-    Ok(Expression::FunctionCall(Box::new(to_be_called), args))
-}
-
-fn parse_function<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
+fn parse_spec(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let keyword = expect(tokens, Keyword::create_expect(KeywordKind::Spec))?;
     let generic = if let Some(Token {
-        token_type: TokenKind::Operator(OperatorKind::Lt),
+        token_type:
+            TokenKind::Operator(Operator {
+                operator: OperatorKind::Lt,
+                ..
+            }),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         Some(Box::new(parse_generic(tokens)?))
     } else {
         None
     };
 
-    expect(tokens, TokenKind::OpenParen)?;
-    Ok(ParseNode::FunctionDecleration(
-        ident_token.clone(),
-        generic,
-        parse_function_type(tokens)?,
-    ))
-}
-
-fn parse_function_type<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<FunctionType, ParseError> {
-    let mut params = vec![];
-    while let Some(_) = tokens.peek() {
-        if let Some(Token {
-            token_type: TokenKind::CloseParen,
-            ..
-        }) = tokens.peek()
-        {
-            break;
-        }
-        let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
-        expect(tokens, TokenKind::Colon)?;
-        let parameter_type = parse_type(tokens)?;
-        params.push((identifier.clone(), parameter_type));
-
-        match tokens.peek() {
-            Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
-                TokenKind::CloseParen => {
-                    break;
-                }
-                _ => {
-                    return Err(ParseError::new(&format!(
-                        "Expected comma or closing parenthesis!"
-                    )))
-                }
-            },
-            None => return Err(ParseError::new(&format!("Expected token!"))),
-        };
-    }
-
-    expect(tokens, TokenKind::CloseParen)?;
-    expect(tokens, TokenKind::Operator(OperatorKind::Arrow))?;
-    let ret_type = match parse_type(tokens) {
-        Ok(t) => t,
-        Err(_) => Type::Unit,
-    };
-    let body = parse_statement(tokens)?;
-    Ok((params, ret_type, Box::new(body)))
-}
-
-fn parse_function_type_with_first<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-    first: &Token,
-) -> Result<FunctionType, ParseError> {
-    let mut params = vec![];
-
-    expect(tokens, TokenKind::Colon)?;
-    let parameter_type = parse_type(tokens)?;
-    params.push((first.clone(), parameter_type));
-    match tokens.peek() {
-        Some(t) => match t.token_type {
-            TokenKind::Comma => tokens.next(),
-            TokenKind::CloseParen => None,
-            _ => {
-                return Err(ParseError::new(&format!(
-                    "Expected comma or closing parenthesis!"
-                )))
-            }
-        },
-        None => return Err(ParseError::new(&format!("Expected token!"))),
-    };
-
-    while let Some(_) = tokens.peek() {
-        if let Some(Token {
-            token_type: TokenKind::CloseParen,
-            ..
-        }) = tokens.peek()
-        {
-            break;
-        }
-        let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
-        expect(tokens, TokenKind::Colon)?;
-        let parameter_type = parse_type(tokens)?;
-        params.push((identifier.clone(), parameter_type));
-
-        match tokens.peek() {
-            Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
-                TokenKind::CloseParen => {
-                    break;
-                }
-                _ => {
-                    return Err(ParseError::new(&format!(
-                        "Expected comma or closing parenthesis!"
-                    )))
-                }
-            },
-            None => return Err(ParseError::new(&format!("Expected token!"))),
-        };
-    }
-
-    expect(tokens, TokenKind::CloseParen)?;
-    expect(tokens, TokenKind::Operator(OperatorKind::Arrow))?;
-    let ret_type = match parse_type(tokens) {
-        Ok(t) => t,
-        Err(_) => Type::Unit,
-    };
-    let body = parse_statement(tokens)?;
-    Ok((params, ret_type, Box::new(body)))
-}
-
-fn parse_block_statement<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::OpenBrace)?;
+    let identifier = expect(tokens, TokenKind::Ident(String::from("")))?;
+    let left = expect(tokens, TokenKind::OpenBrace)?;
     let mut statements = vec![];
-    while let Some(_) = tokens.peek() {
+
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
+        {
+            break;
+        }
+        statements.push(parse_spec_statement(tokens)?);
+    }
+
+    let right = expect(tokens, TokenKind::CloseBrace)?;
+    Ok(ParseNode::SpecDecleration(SpecDecleration {
+        spec_keyword: keyword.range,
+        identifier: identifier.clone(),
+        generic,
+        body: statements,
+        range: (keyword.range.0, right.range.1),
+    }))
+}
+
+fn parse_spec_statement(tokens: &mut Cursor<&Token>) -> Result<SpecBody, ParseError> {
+    match tokens.current() {
+        Some(t) => match t.token_type {
+            TokenKind::Ident(_) => {
+                tokens.move_next();
+                Ok(SpecBody::Function(
+                    (*t).clone(),
+                    parse_function_type(tokens, None)?,
+                ))
+            }
+            _ => Err(ParseError::new(&format!(
+                "Unexpected token {:?} found in action statement!",
+                t
+            ))),
+        },
+        None => Err(ParseError::new(&format!("Unkown field in spec statement!"))),
+    }
+}
+
+fn parse_function_call(
+    tokens: &mut Cursor<&Token>,
+    to_be_called: Expression,
+) -> Result<Expression, ParseError> {
+    let op = expect(tokens, TokenKind::OpenParen)?;
+    let mut args = vec![];
+    while let Some(_) = tokens.current() {
+        if let Some(Token {
+            token_type: TokenKind::CloseParen,
+            ..
+        }) = tokens.current()
+        {
+            break;
+        }
+        args.push(parse_expression(tokens, 0)?);
+        match tokens.current() {
+            Some(t) => match t.token_type {
+                TokenKind::Comma => tokens.move_next(),
+                TokenKind::CloseParen => {
+                    break;
+                }
+                _ => {
+                    return Err(ParseError::new(&format!(
+                        "Expected comma or closing parenthesis!"
+                    )))
+                }
+            },
+            None => return Err(ParseError::new(&format!("Expected token!"))),
+        };
+    }
+    let cp = expect(tokens, TokenKind::CloseParen)?;
+    let start = to_be_called.get_range().0;
+    let fc = FunctionCall {
+        expression_to_call: Box::new(to_be_called),
+        arguments: args,
+        paren_tokens: (op.range.0, cp.range.1),
+        range: (start, cp.range.1),
+    };
+    Ok(Expression::FunctionCall(fc))
+}
+
+// fn parse_var_or_func(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+//     let ttype = parse_type(tokens)?;
+//     let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
+
+//     if let Some(t) = tokens.current() {
+//         match t.token_type {
+//             TokenKind::OpenParen => {
+//                 return parse_function(tokens, ttype, ident_token);
+//             }
+//             _ => return parse_variable_decleration(tokens, ttype, ident_token),
+//         }
+//     }
+//     Err(ParseError::new(&String::from(
+//         "Could not parse funciton or variable",
+//     )))
+// }
+
+fn parse_function(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
+    let generic = if let Some(Token {
+        token_type:
+            TokenKind::Operator(Operator {
+                operator: OperatorKind::Lt,
+                ..
+            }),
+        ..
+    }) = tokens.peek_next()
+    {
+        Some(Box::new(parse_generic(tokens)?))
+    } else {
+        None
+    };
+
+    let fn_type = parse_function_type(tokens, None)?;
+    let body = parse_statement(tokens)?;
+
+    let end = body.get_range().1;
+
+    let fd = FunctionDecleration {
+        identifier: ident_token.clone(),
+        function_type: fn_type,
+        body: Box::new(body),
+        generic,
+        range: (ident_token.range.0, end),
+    };
+
+    Ok(ParseNode::FunctionDecleration(fd))
+}
+
+fn parse_function_type(
+    tokens: &mut Cursor<&Token>,
+    first: Option<(&Token, &Token)>,
+) -> Result<FunctionSignature, ParseError> {
+    let mut params = vec![];
+
+    let op = match first {
+        Some((op, prm)) => {
+            expect(tokens, TokenKind::Colon)?;
+            let parameter_type = parse_type(tokens)?;
+            let ts = TypeSymbol {
+                symbol_type: parameter_type,
+                symbol: prm.clone(),
+            };
+            params.push(ts);
+
+            match tokens.peek_next() {
+                Some(t) => match t.token_type {
+                    TokenKind::Comma => tokens.move_next(),
+                    TokenKind::CloseParen => (),
+                    _ => {
+                        return Err(ParseError::new(&format!(
+                            "Expected comma or closing parenthesis!"
+                        )))
+                    }
+                },
+                None => return Err(ParseError::new(&format!("Expected token!"))),
+            };
+            op
+        }
+        None => expect(tokens, TokenKind::OpenParen)?,
+    };
+
+    while let Some(_) = tokens.current() {
+        if let Some(Token {
+            token_type: TokenKind::CloseParen,
+            ..
+        }) = tokens.current()
+        {
+            break;
+        }
+        let parameter_type = parse_type(tokens)?;
+        let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
+        let ts = TypeSymbol {
+            symbol_type: parameter_type,
+            symbol: identifier.clone(),
+        };
+        params.push(ts);
+
+        match tokens.current() {
+            Some(t) => match t.token_type {
+                TokenKind::Comma => tokens.move_next(),
+                TokenKind::CloseParen => {
+                    break;
+                }
+                _ => {
+                    return Err(ParseError::new(&format!(
+                        "Expected comma or closing parenthesis!"
+                    )))
+                }
+            },
+            None => return Err(ParseError::new(&format!("Expected token!"))),
+        };
+    }
+
+    let cp = expect(tokens, TokenKind::CloseParen)?;
+    let _arrow = expect(tokens, Operator::create_expect(OperatorKind::Arrow))?;
+
+    let ret_type = match parse_type(tokens) {
+        Ok(t) => t,
+        Err(_) => Type::Unit,
+    };
+
+    let end = ret_type.get_range().1;
+    Ok(FunctionSignature {
+        parameters: params,
+        return_type: Box::new(ret_type),
+        parens: (op.range.0, cp.range.1),
+        range: (op.range.0, end),
+    })
+}
+
+fn parse_block_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let op = expect(tokens, TokenKind::OpenBrace)?;
+    let mut statements = vec![];
+    while let Some(_) = tokens.current() {
+        if let Some(Token {
+            token_type: TokenKind::CloseBrace,
+            ..
+        }) = tokens.current()
         {
             break;
         }
 
         statements.push(parse_statement(tokens)?);
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::CloseBrace => {
                     break;
@@ -450,77 +545,33 @@ fn parse_block_statement<'a, T: Iterator<Item = &'a Token>>(
             None => return Err(ParseError::new(&format!("Expected token!"))),
         };
     }
-    expect(tokens, TokenKind::CloseBrace)?;
-    Ok(ParseNode::Block(statements))
+    let cp = expect(tokens, TokenKind::CloseBrace)?;
+    Ok(ParseNode::Block(statements, (op.range.0, cp.range.1)))
 }
 
-fn parse_expression<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-    prev_prec: u8,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
-        Some(t) => match t.token_type {
-            TokenKind::Keyword(KeywordKind::If) => {
-                tokens.next(); // eat keyword
-                let condition = parse_expression(tokens, 0)?;
-                let body = parse_block_statement(tokens)?;
-                let else_clause = if let Some(Token {
-                    token_type: TokenKind::Keyword(KeywordKind::Else),
-                    ..
-                }) = tokens.peek()
-                {
-                    tokens.next();
-                    Some(Box::new(parse_block_statement(tokens)?))
-                } else {
-                    None
-                };
-
-                Ok(Expression::IfExpression(
-                    Box::new(condition),
-                    Box::new(body),
-                    else_clause,
-                ))
-            }
-            TokenKind::Keyword(KeywordKind::Loop) => {
-                tokens.next();
-                if let Some(Token {
-                    token_type: TokenKind::OpenBrace,
-                    ..
-                }) = tokens.peek()
-                {
-                    Ok(Expression::LoopExpression(LoopExpression::Infinite(
-                        Box::new(parse_block_statement(tokens)?),
-                    )))
-                } else {
-                    Ok(Expression::LoopExpression(LoopExpression::Until(
-                        Box::new(parse_expression(tokens, 0)?),
-                        Box::new(parse_block_statement(tokens)?),
-                    )))
-                }
-            }
-            _ => parse_operator_expression(tokens, prev_prec),
-        },
-        None => Err(ParseError::new(&String::from(
-            "Expected some token in expression!",
-        ))),
-    }
-}
-
-fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn parse_operator_expression(
+    tokens: &mut Cursor<&Token>,
     prev_prec: u8,
 ) -> Result<Expression, ParseError> {
     let mut left = if let Some(Token {
         token_type: TokenKind::Operator(o),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         let uprec = unary_precedence(*o);
         if uprec != 0 && uprec >= prev_prec {
-            tokens.next();
+            tokens.move_next();
             let right = parse_expression(tokens, uprec);
             match right {
-                Ok(n) => Ok(Expression::UnaryExpression(o.clone(), Box::new(n))),
+                Ok(n) => {
+                    let end = n.get_range().1;
+                    let ue = UnaryExpression {
+                        expression: Box::new(n),
+                        operator: o.operator,
+                        range: (o.range.0, end),
+                    };
+                    Ok(Expression::UnaryExpression(ue))
+                }
                 Err(_) => right,
             }
         } else {
@@ -533,37 +584,44 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
     while let Some(Token {
         token_type: TokenKind::Operator(o),
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         let prec = binary_precedence(*o);
         if prec <= prev_prec || prec == 0 {
             break;
         }
-        tokens.next();
+        tokens.move_next();
 
-        let right = parse_expression(tokens, prec);
-        left = Ok(Expression::BinaryExpression(
-            o.clone(),
-            Box::new(left?),
-            Box::new(right?),
-        ));
+        let lleft = left?;
+        let right = parse_expression(tokens, prec)?;
+        let start = lleft.get_range().0;
+        let end = right.get_range().1;
+        let be = BinaryExpression {
+            left: Box::new(lleft),
+            operator: o.operator,
+            right: Box::new(right),
+            range: (start, end),
+        };
+        left = Ok(Expression::BinaryExpression(be));
     }
 
     let nleft = left?;
     let nnleft = nleft.clone();
+
     if let (
         Some(Token {
             token_type: TokenKind::Colon,
             ..
         }),
         Expression::Identifier(t),
-    ) = (tokens.peek(), nleft)
+    ) = (tokens.peek_next(), nleft)
     {
-        Ok(Expression::Lambda(parse_function_type_with_first(
-            tokens, &t,
-        )?))
+        Ok(Expression::Lambda(
+            parse_function_type(tokens, Some((tokens.current().unwrap(), &t)))?,
+            Box::new(parse_statement(tokens)?),
+        ))
     } else {
-        while let Some(Token { token_type, .. }) = tokens.peek() {
+        while let Some(Token { token_type, .. }) = tokens.current() {
             let prec = postfix_precedence(token_type);
             if prec <= prev_prec || prec == 0 {
                 break;
@@ -571,10 +629,16 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
             match token_type {
                 TokenKind::OpenParen => return parse_function_call(tokens, nnleft),
                 TokenKind::OpenBracket => {
-                    expect(tokens, TokenKind::OpenBracket)?;
+                    let ob = expect(tokens, TokenKind::OpenBracket)?;
                     let value = parse_expression(tokens, 0)?;
-                    expect(tokens, TokenKind::CloseBracket)?;
-                    return Ok(Expression::Index(Box::new(nnleft), Box::new(value)));
+                    let cb = expect(tokens, TokenKind::CloseBracket)?;
+                    let idx = ExpressionIndex {
+                        index_expression: Box::new(nnleft),
+                        index_value: Box::new(value),
+                        square_range: (ob.range.0, cb.range.1),
+                    };
+
+                    return Ok(Expression::Index(idx));
                 }
                 _ => return Ok(nnleft),
             }
@@ -584,60 +648,144 @@ fn parse_operator_expression<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_variable_decleration<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::Keyword(KeywordKind::Let))?;
+fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expression, ParseError> {
+    match tokens.current() {
+        Some(t) => match t.token_type {
+            TokenKind::Keyword(Keyword {
+                keyword: KeywordKind::If,
+                ..
+            }) => {
+                tokens.move_next(); // eat keyword
+                let condition = parse_expression(tokens, 0)?;
+                let body = parse_block_statement(tokens)?;
+                let else_clause = if let Some(Token {
+                    token_type:
+                        TokenKind::Keyword(Keyword {
+                            keyword: KeywordKind::Else,
+                            ..
+                        }),
+                    ..
+                }) = tokens.peek_next()
+                {
+                    let tok = tokens.current().unwrap();
+                    tokens.move_next();
+                    Some((tok.range, Box::new(parse_block_statement(tokens)?)))
+                } else {
+                    None
+                };
+
+                let end = else_clause.as_ref().map_or(body.get_range().1, |f| f.0 .1);
+                Ok(Expression::IfExpression(IfExpression {
+                    if_token: t.range,
+                    condition: Box::new(condition),
+                    body: Box::new(body),
+                    else_clause,
+                    range: (t.range.0, end),
+                }))
+            }
+            TokenKind::Keyword(Keyword {
+                keyword: KeywordKind::Loop,
+                ..
+            }) => {
+                tokens.move_next();
+                if let Some(Token {
+                    token_type: TokenKind::OpenBrace,
+                    ..
+                }) = tokens.peek_next()
+                {
+                    let body = parse_block_statement(tokens)?;
+                    let range = (t.range.0, body.get_range().1);
+                    Ok(Expression::LoopExpression(LoopExpression {
+                        keyword: t.range,
+                        loop_type: Loop::Infinite(Box::new(body)),
+                        range,
+                    }))
+                } else {
+                    let body = parse_block_statement(tokens)?;
+                    let range = (t.range.0, body.get_range().1);
+                    Ok(Expression::LoopExpression(LoopExpression {
+                        keyword: t.range,
+                        loop_type: Loop::Until(
+                            Box::new(parse_expression(tokens, 0)?),
+                            Box::new(body),
+                        ),
+
+                        range,
+                    }))
+                }
+            }
+            _ => parse_operator_expression(tokens, prev_prec),
+        },
+        None => Err(ParseError::new(&String::from(
+            "Expected some token in expression!",
+        ))),
+    }
+}
+
+fn parse_variable_decleration(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let keyword = expect(tokens, Keyword::create_expect(KeywordKind::Let))?;
     let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
-    let var_type = match tokens.peek() {
+
+    let var_type = match tokens.peek_next() {
         Some(Token {
             token_type: TokenKind::Colon,
             ..
         }) => {
-            tokens.next();
-            Some(Box::new(ParseNode::Type(parse_type(tokens)?)))
+            tokens.move_next();
+            let _type = parse_type(tokens)?;
+            Some(Box::new(_type))
         }
         _ => None,
     };
-    let var_initializer = match tokens.peek() {
+
+    let var_initializer = match tokens.current() {
         Some(Token {
-            token_type: TokenKind::Operator(OperatorKind::Assignment),
+            token_type:
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::Assignment,
+                    ..
+                }),
             ..
         }) => {
-            tokens.next();
-            Some(Box::new(ParseNode::Expression(parse_expression(
-                tokens, 0,
-            )?)))
+            let tok = tokens.current().unwrap();
+            tokens.move_next();
+            Some((Box::new(parse_expression(tokens, 0)?), tok.range))
         }
         _ => None,
     };
-    Ok(ParseNode::VariableDecleration(
-        identifier.clone(),
-        var_type,
-        var_initializer,
-    ))
+
+    // expect(tokens, TokenKind::Semi)?;
+
+    let end = match &var_initializer {
+        Some(s) => s.1,
+        None => identifier.range,
+    };
+    let start = keyword.range.0;
+    let vd = VariableDecleration {
+        variable_type: var_type,
+        possible_initializer: var_initializer,
+        identifier: identifier.clone(),
+        range: (start, end.1),
+    };
+    Ok(ParseNode::VariableDecleration(vd))
 }
 
-fn parse_tag<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::OpenBracket)?;
+fn parse_tag(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let left = expect(tokens, TokenKind::OpenBracket)?;
     let expression = parse_expression(tokens, 0)?;
-    expect(tokens, TokenKind::CloseBracket)?;
-    Ok(ParseNode::Tag(expression))
+    let right = expect(tokens, TokenKind::CloseBracket)?;
+    Ok(ParseNode::Tag(expression, (left.range.0, right.range.1)))
 }
 
-fn parse_import<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::Keyword(KeywordKind::Import))?;
+fn parse_import(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let keyword = expect(tokens, Keyword::create_expect(KeywordKind::Import))?;
     let mut modules = vec![];
     let thing = parse_expression(tokens, 0)?;
     fn add_wild(modules: &mut Vec<Expression>, node: &Expression) {
         match node {
-            Expression::BinaryExpression(_, l, r) => {
-                add_wild(modules, l.as_ref());
-                add_wild(modules, r.as_ref());
+            Expression::BinaryExpression(BinaryExpression { left, right, .. }) => {
+                add_wild(modules, left.as_ref());
+                add_wild(modules, right.as_ref());
             }
             Expression::Identifier(_) => {
                 modules.push(node.clone());
@@ -646,38 +794,42 @@ fn parse_import<'a, T: Iterator<Item = &'a Token>>(
         }
     }
     add_wild(&mut modules, &thing);
-    let wildcard = if let Some(Token {
-        token_type: TokenKind::Operator(OperatorKind::Wildcard),
-        ..
-    }) = tokens.peek()
-    {
-        tokens.next();
-        true
-    } else {
-        false
+    let end = match modules.last() {
+        Some(m) => m.get_range().1,
+        None => keyword.range.1,
     };
-    Ok(ParseNode::Import(modules, wildcard))
+    let id = ImportDecleration {
+        import_keyword: keyword.range,
+        path: modules,
+        range: (keyword.range.0, end),
+    };
+
+    Ok(ParseNode::Import(id))
 }
 
-fn parse_primary<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
+fn parse_primary(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    match tokens.current() {
         Some(t) => match t {
             Token {
                 token_type: TokenKind::OpenParen,
                 ..
             } => {
-                tokens.next();
-                match tokens.peek() {
+                tokens.move_next();
+                match tokens.peek_next() {
                     Some(Token {
                         token_type: TokenKind::CloseParen,
                         ..
-                    }) => Ok(Expression::Lambda(parse_function_type(tokens)?)),
+                    }) => {
+                        tokens.move_prev();
+                        Ok(Expression::Lambda(
+                            parse_function_type(tokens, None)?,
+                            Box::new(parse_statement(tokens)?),
+                        ))
+                    }
                     _ => {
                         let expr = parse_expression(tokens, 0)?;
                         match expr {
-                            Expression::Lambda(l) => Ok(Expression::Lambda(l)),
+                            Expression::Lambda(l, b) => Ok(Expression::Lambda(l, b)),
                             _ => {
                                 expect(tokens, TokenKind::CloseParen)?;
                                 Ok(expr)
@@ -692,16 +844,19 @@ fn parse_primary<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<ParseNode, ParseError> {
-    expect(tokens, TokenKind::Operator(OperatorKind::Lt))?;
+fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let start = expect(tokens, Operator::create_expect(OperatorKind::Lt))?;
+    // let gt = Operator::create_expect(OperatorKind::Gt);
     let mut generic_params = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
-            token_type: TokenKind::Operator(OperatorKind::Gt),
+            token_type:
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::Gt,
+                    ..
+                }),
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -711,7 +866,7 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
         let constraints = if let Some(Token {
             token_type: TokenKind::Colon,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             Some(parse_generic_constraints(tokens)?)
         } else {
@@ -719,9 +874,12 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
         };
         generic_params.push((type_param.clone(), constraints));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Operator(OperatorKind::Gt) => {
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::Gt,
+                    ..
+                }) => {
                     break;
                 }
                 _ => (),
@@ -729,20 +887,25 @@ fn parse_generic<'a, T: Iterator<Item = &'a Token>>(
             None => return Err(ParseError::new(&format!("Expected token!"))),
         };
     }
-    expect(tokens, TokenKind::Operator(OperatorKind::Gt))?;
-    Ok(ParseNode::GenericParameters(generic_params))
+    let end = expect(tokens, Operator::create_expect(OperatorKind::Gt))?;
+    Ok(ParseNode::GenericParameters(GenericParameters {
+        parameters: generic_params,
+        range: (start.range.0, end.range.1),
+    }))
 }
 
-fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Vec<Type>, ParseError> {
+fn parse_generic_constraints(tokens: &mut Cursor<&Token>) -> Result<Vec<Type>, ParseError> {
     expect(tokens, TokenKind::Colon)?;
     let mut constraints = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
-            token_type: TokenKind::Operator(OperatorKind::Gt),
+            token_type:
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::Gt,
+                    ..
+                }),
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -750,12 +913,19 @@ fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
         let constraint_type = parse_type(tokens)?;
         constraints.push(constraint_type);
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Operator(OperatorKind::BitAnd) => {
-                    tokens.next();
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::BitAnd,
+                    ..
+                }) => {
+                    tokens.move_next();
                 }
-                TokenKind::Operator(OperatorKind::Gt) | TokenKind::Comma => break,
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::Gt,
+                    ..
+                })
+                | TokenKind::Comma => break,
                 _ => (),
             },
             None => return Err(ParseError::new(&format!("Expected token!"))),
@@ -764,16 +934,14 @@ fn parse_generic_constraints<'a, T: Iterator<Item = &'a Token>>(
     Ok(constraints)
 }
 
-fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
-    match tokens.peek() {
+fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    match tokens.current() {
         Some(t) => match t {
             Token {
                 token_type: TokenKind::Literal(a),
                 ..
             } => {
-                tokens.next();
+                tokens.move_next();
                 Ok(Expression::Literal(a.clone()))
             }
             Token {
@@ -791,14 +959,14 @@ fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
             Token {
                 token_type: TokenKind::Keyword(k),
                 ..
-            } => match k {
+            } => match k.keyword {
                 KeywordKind::True => {
-                    tokens.next();
-                    Ok(Expression::Literal(Literal::Boolean(true)))
+                    tokens.move_next();
+                    Ok(Expression::Literal(Literal::Boolean(true, t.range)))
                 }
                 KeywordKind::False => {
-                    tokens.next();
-                    Ok(Expression::Literal(Literal::Boolean(false)))
+                    tokens.move_next();
+                    Ok(Expression::Literal(Literal::Boolean(false, t.range)))
                 }
                 _ => Err(ParseError::new(&format!(
                     "Keyword {:?} is not a valid literal!",
@@ -811,14 +979,13 @@ fn parse_literal<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_ident<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
+fn parse_ident(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
     let possible_type = parse_type(tokens)?;
+
     if let Some(Token {
         token_type: TokenKind::OpenBrace,
         ..
-    }) = tokens.peek()
+    }) = tokens.current()
     {
         parse_template_initializer(tokens, Some(Box::new(possible_type)))
     } else {
@@ -832,18 +999,18 @@ fn parse_ident<'a, T: Iterator<Item = &'a Token>>(
     }
 }
 
-fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-    struct_type: Option<Box<Type>>,
+fn parse_template_initializer(
+    tokens: &mut Cursor<&Token>,
+    named_type: Option<Box<Type>>,
 ) -> Result<Expression, ParseError> {
-    expect(tokens, TokenKind::OpenBrace)?;
+    let ob = expect(tokens, TokenKind::OpenBrace)?;
     let mut key_values = vec![];
 
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBrace,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
@@ -855,18 +1022,18 @@ fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
         let value = if let Some(Token {
             token_type: TokenKind::Colon,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
-            tokens.next();
+            tokens.move_next();
             Some(parse_expression(tokens, 0)?)
         } else {
             None
         };
         key_values.push((key_string, value));
 
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseBrace => {
                     break;
                 }
@@ -880,32 +1047,33 @@ fn parse_template_initializer<'a, T: Iterator<Item = &'a Token>>(
         };
     }
 
-    expect(tokens, TokenKind::CloseBrace)?;
+    let cb = expect(tokens, TokenKind::CloseBrace)?;
+    let start = named_type.as_ref().map_or(ob.range.0, |f| f.get_range().0);
 
-    Ok(Expression::Literal(Literal::TemplateInitializer(
-        struct_type,
-        key_values,
-    )))
+    let si = TemplateInitializer {
+        named_type,
+        initializer_values: key_values,
+        range: (start, cb.range.1),
+    };
+    Ok(Expression::Literal(Literal::StructInitializer(si)))
 }
 
-fn parse_array_literal<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Expression, ParseError> {
-    expect(tokens, TokenKind::OpenBracket)?;
+fn parse_array_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    let ob = expect(tokens, TokenKind::OpenBracket)?;
     let mut values = vec![];
-    while let Some(_) = tokens.peek() {
+    while let Some(_) = tokens.current() {
         if let Some(Token {
             token_type: TokenKind::CloseBracket,
             ..
-        }) = tokens.peek()
+        }) = tokens.current()
         {
             break;
         }
         let value = parse_expression(tokens, 0)?;
         values.push(value);
-        match tokens.peek() {
+        match tokens.current() {
             Some(t) => match t.token_type {
-                TokenKind::Comma => tokens.next(),
+                TokenKind::Comma => tokens.move_next(),
                 TokenKind::CloseBracket => {
                     break;
                 }
@@ -918,46 +1086,65 @@ fn parse_array_literal<'a, T: Iterator<Item = &'a Token>>(
             None => return Err(ParseError::new(&format!("Expected token!"))),
         };
     }
-    expect(tokens, TokenKind::CloseBracket)?;
+    let cb = expect(tokens, TokenKind::CloseBracket)?;
+    let ai = ArrayInitializer {
+        elements: values,
+        range: (ob.range.0, cb.range.1),
+    };
 
-    Ok(Expression::Literal(Literal::Array(values)))
+    Ok(Expression::Literal(Literal::Array(ai)))
 }
 
-fn parse_type<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
-) -> Result<Type, ParseError> {
-    match tokens.peek() {
+fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
+    match tokens.current() {
         Some(t) => {
             let result = match t.token_type {
                 TokenKind::Ident(_) => {
                     let token = (*t).clone();
-                    tokens.next();
+                    tokens.move_next();
                     Ok(Type::NamedType(token))
                 }
                 TokenKind::Keyword(k) => {
-                    tokens.next();
-                    match k {
-                        KeywordKind::Int => Ok(Type::Int(8)),
-                        KeywordKind::Uint => Ok(Type::Uint(8)),
-                        KeywordKind::Bool => Ok(Type::Bool),
-                        KeywordKind::Char => Ok(Type::Char),
-                        KeywordKind::Float => Ok(Type::Float),
+                    tokens.move_next();
+                    match k.keyword {
+                        KeywordKind::Int => Ok(Type::Int(8, t.range)),
+                        KeywordKind::Int8 => Ok(Type::Int(8, t.range)),
+                        KeywordKind::Int16 => Ok(Type::Int(16, t.range)),
+                        KeywordKind::Int32 => Ok(Type::Int(32, t.range)),
+                        KeywordKind::Int64 => Ok(Type::Int(64, t.range)),
+                        KeywordKind::Int128 => Ok(Type::Int(128, t.range)),
+                        KeywordKind::Uint => Ok(Type::Uint(8, t.range)),
+                        KeywordKind::Uint8 => Ok(Type::Uint(8, t.range)),
+                        KeywordKind::Uint16 => Ok(Type::Uint(16, t.range)),
+                        KeywordKind::Uint32 => Ok(Type::Uint(32, t.range)),
+                        KeywordKind::Uint64 => Ok(Type::Uint(64, t.range)),
+                        KeywordKind::Uint128 => Ok(Type::Uint(128, t.range)),
+                        KeywordKind::Bool => Ok(Type::Bool(t.range)),
+                        KeywordKind::Char => Ok(Type::Char(t.range)),
+                        KeywordKind::Float => Ok(Type::Float(32, t.range)),
+                        KeywordKind::Float32 => Ok(Type::Float(32, t.range)),
+                        KeywordKind::Float64 => Ok(Type::Float(64, t.range)),
                         _ => Err(ParseError::new(&format!("{:?} is not a valid type!", k))),
                     }
                 }
                 TokenKind::OpenBracket => {
-                    tokens.next();
+                    let ob = tokens.current().unwrap();
+                    tokens.move_next();
                     let array_type = parse_type(tokens)?;
                     let size = if let Some(Token {
                         token_type: TokenKind::Colon,
                         ..
-                    }) = tokens.peek()
+                    }) = tokens.peek_next()
                     {
-                        tokens.next();
-                        let size = expect(tokens, TokenKind::Literal(Literal::Integer(0, 0)))?;
+                        let tok = tokens.current().unwrap();
+                        tokens.move_next();
+                        let size = expect(
+                            tokens,
+                            TokenKind::Literal(Literal::Integer(0, 0, default_range())),
+                        )?;
                         let numeric_size = match size {
                             Token {
-                                token_type: TokenKind::Literal(Literal::Integer(i, _)),
+                                token_type: TokenKind::Literal(Literal::Integer(i, _, _)),
                                 ..
                             } => *i as usize,
                             _ => {
@@ -966,31 +1153,37 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                                 )));
                             }
                         };
-                        Some(numeric_size)
+                        Some((tok.range, numeric_size))
                     } else {
                         None
                     };
-                    Ok(Type::ArrayType(Box::new(array_type), size))
+                    let cb = expect(tokens, TokenKind::CloseBracket)?;
+                    Ok(Type::ArrayType(ArrayType {
+                        base_type: Box::new(array_type),
+                        size,
+                        range: (ob.range.0, cb.range.1),
+                    }))
                 }
                 TokenKind::OpenParen => {
-                    tokens.next();
+                    let op = tokens.current().unwrap();
+                    tokens.move_next();
                     let mut parameters = vec![];
-                    while let Some(_) = tokens.peek() {
+                    while let Some(_) = tokens.peek_next() {
                         if let Some(Token {
                             token_type: TokenKind::CloseParen,
                             ..
-                        }) = tokens.peek()
+                        }) = tokens.peek_next()
                         {
                             break;
                         }
                         let parameter_type = parse_type(tokens)?;
                         parameters.push(parameter_type);
 
-                        match tokens.peek() {
+                        match tokens.peek_next() {
                             Some(t) => match t.token_type {
-                                TokenKind::Comma => tokens.next(),
+                                TokenKind::Comma => tokens.move_next(),
                                 TokenKind::CloseParen => {
-                                    tokens.next();
+                                    tokens.move_next();
                                     break;
                                 }
                                 _ => {
@@ -1002,37 +1195,68 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                             None => return Err(ParseError::new(&format!("Expected token!"))),
                         };
                     }
-                    expect(tokens, TokenKind::CloseParen)?;
+                    let cp = expect(tokens, TokenKind::CloseParen)?;
                     let ret_type = if let Some(Token {
-                        token_type: TokenKind::Operator(OperatorKind::Arrow),
+                        token_type:
+                            TokenKind::Operator(Operator {
+                                operator: OperatorKind::Arrow,
+                                ..
+                            }),
                         ..
-                    }) = tokens.peek()
+                    }) = tokens.peek_next()
                     {
-                        tokens.next();
+                        tokens.move_next();
                         parse_type(tokens)?
                     } else {
                         Type::Unit
                     };
-                    Ok(Type::FunctionType(parameters, Box::new(ret_type)))
+                    let end = ret_type.get_range().1;
+
+                    Ok(Type::FunctionType(FunctionType {
+                        parameters,
+                        return_type: Box::new(ret_type),
+                        parens: (op.range.0, cp.range.1),
+                        range: (op.range.0, end),
+                    }))
                 }
-                TokenKind::Operator(OperatorKind::BitAnd) => {
-                    tokens.next();
-                    Ok(Type::ReferenceType(Box::new(parse_type(tokens)?)))
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::BitAnd,
+                    ..
+                }) => {
+                    let tok = tokens.current().unwrap();
+                    tokens.move_next();
+                    let ttype = parse_type(tokens)?;
+                    let end = ttype.get_range().1;
+
+                    Ok(Type::ReferenceType(ReferenceType {
+                        base_type: Box::new(ttype),
+                        reference: tok.range,
+                        range: (tok.range.0, end),
+                    }))
                 }
                 _ => Err(ParseError::new(&format!("{:?} is not a valid type!", t))),
             };
             if let Some(Token {
-                token_type: TokenKind::Operator(OperatorKind::Lt),
-                ..
-            }) = tokens.peek()
-            {
-                tokens.next();
-                let mut type_arguments = vec![];
-                while let Some(_) = tokens.peek() {
-                    if let Some(Token {
-                        token_type: TokenKind::Operator(OperatorKind::Gt),
+                token_type:
+                    TokenKind::Operator(Operator {
+                        operator: OperatorKind::Lt,
                         ..
-                    }) = tokens.peek()
+                    }),
+                ..
+            }) = tokens.current()
+            {
+                let lt = tokens.current().unwrap();
+                tokens.move_next();
+                let mut type_arguments = vec![];
+                while let Some(_) = tokens.current() {
+                    if let Some(Token {
+                        token_type:
+                            TokenKind::Operator(Operator {
+                                operator: OperatorKind::Gt,
+                                ..
+                            }),
+                        ..
+                    }) = tokens.current()
                     {
                         break;
                     }
@@ -1040,10 +1264,13 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                     let arg_type = parse_type(tokens)?;
                     type_arguments.push(arg_type);
 
-                    match tokens.peek() {
+                    match tokens.current() {
                         Some(t) => match t.token_type {
-                            TokenKind::Comma => tokens.next(),
-                            TokenKind::Operator(OperatorKind::Gt) => {
+                            TokenKind::Comma => tokens.move_next(),
+                            TokenKind::Operator(Operator {
+                                operator: OperatorKind::Gt,
+                                ..
+                            }) => {
                                 break;
                             }
                             _ => {
@@ -1055,17 +1282,22 @@ fn parse_type<'a, T: Iterator<Item = &'a Token>>(
                         None => return Err(ParseError::new(&format!("Expected token!"))),
                     };
                 }
-                expect(tokens, TokenKind::Operator(OperatorKind::Gt))?;
-                return Ok(Type::GenericType(Box::new(result?), type_arguments));
+                let gt = expect(tokens, Operator::create_expect(OperatorKind::Gt))?;
+                return Ok(Type::GenericType(GenericType {
+                    base_type: Box::new(result?),
+                    arguments: type_arguments,
+                    range: (lt.range.0, gt.range.1),
+                }));
             }
+
             result
         }
         None => Err(ParseError::new(&format!("Expected more tokens for type!"))),
     }
 }
 
-fn unary_precedence(operator: OperatorKind) -> u8 {
-    match operator {
+fn unary_precedence(operator: Operator) -> u8 {
+    match operator.operator {
         OperatorKind::Minus
         | OperatorKind::LogicalNot
         | OperatorKind::BitNot
@@ -1075,9 +1307,20 @@ fn unary_precedence(operator: OperatorKind) -> u8 {
     }
 }
 
-fn binary_precedence(operator: OperatorKind) -> u8 {
-    match operator {
-        OperatorKind::Assignment => 2,
+fn binary_precedence(operator: Operator) -> u8 {
+    match operator.operator {
+        OperatorKind::Assignment
+        | OperatorKind::BitAndEqual
+        | OperatorKind::BitLeftEqual
+        | OperatorKind::BitNotEqual
+        | OperatorKind::BitOrEqual
+        | OperatorKind::BitRightEqual
+        | OperatorKind::BitXorEqual
+        | OperatorKind::DivideEqual
+        | OperatorKind::MinusEqual
+        | OperatorKind::MultEqual
+        | OperatorKind::PercentEqual
+        | OperatorKind::PlusEqual => 2,
         OperatorKind::LogicalOr => 3,
         OperatorKind::LogicalXor => 4,
         OperatorKind::LogicalAnd => 5,
@@ -1108,21 +1351,28 @@ fn postfix_precedence(token: &TokenKind) -> u8 {
     }
 }
 
-fn expect<'a, T: Iterator<Item = &'a Token>>(
-    tokens: &mut Peekable<T>,
+fn expect<'a>(
+    tokens: &mut Cursor<&'a Token>,
     token_type: TokenKind,
 ) -> Result<&'a Token, ParseError> {
-    match tokens.next() {
+    match tokens.current() {
         Some(t) if std::mem::discriminant(&t.token_type) == std::mem::discriminant(&token_type) => {
+            tokens.move_next();
             Ok(t)
         }
-        Some(t) => Err(ParseError::new(&format!(
-            "Expected token {:?}, found token {:?}",
-            token_type, t.token_type
-        ))),
-        None => Err(ParseError::new(&format!(
-            "Expected token {:?} ",
-            token_type
-        ))),
+        Some(t) => {
+            tokens.move_next();
+            Err(ParseError::new(&format!(
+                "Expected token {:?}, found token {:?}",
+                token_type, t.token_type
+            )))
+        }
+        None => {
+            tokens.move_next();
+            Err(ParseError::new(&format!(
+                "Expected token {:?} ",
+                token_type
+            )))
+        }
     }
 }

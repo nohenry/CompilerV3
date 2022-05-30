@@ -19,4 +19,5 @@ lazy_static = "1.4.0"
 proc-macro2 = "1.0.32"
 colored = "2"
 # inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm13-0"] }
-llvm = { path="llvm" }
+# llvm = { path="llvm" }
+llvm-sys = {path="llvm-sys"}

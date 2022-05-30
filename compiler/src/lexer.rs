@@ -25,45 +25,52 @@ impl LexError {
 #[make_keywords]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KeywordKind {
-    Match,    // match
-    When,     // when
-    In,       // in
+    As,       // as
+    Spec,     //spec
+    Switch,   // switch
     If,       // if
-    Elif,     // elif
     Else,     // else
     Loop,     // loop
+    Let,      // let
     Return,   // return
     Int,      // int
+    Int8,     // int
+    Int16,    // int
+    Int32,    // int
+    Int64,    // int
+    Int128,   // int
     Uint,     // uint
+    Uint8,    // uint
+    Uint16,   // uint
+    Uint32,   // uint
+    Uint64,   // uint
+    Uint128,  // uint
     Float,    // float
+    Float32,  // float
+    Float64,  // float
     Char,     // char
     Bool,     // bool
     Template, // template
-    Spec,     // spec
+    Action,   // action
     True,     // true
     False,    // false
     Import,   // import
-    Let,      // let
     Persist,  // persist
     Or,       // or
     And,      // and
     Xor,      // xor
     Null,     // null
-    Module,   // module
-    Function, // function
     Type,     // type
     Export,   // export
-    Yield,    // yield
-    As,       // as
     Const,    // const
-    Action,   // action
     Enum,     // enum
+    Yield,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Keyword {
-    keyword: KeywordKind,
-    range: Range,
+    pub keyword: KeywordKind,
+    pub range: Range,
 }
 
 impl Keyword {
@@ -88,21 +95,37 @@ impl Keyword {
             _ => TokenKind::Keyword(*self),
         }
     }
+
+    pub fn create_expect(kind: KeywordKind) -> TokenKind {
+        TokenKind::Keyword(Keyword {
+            keyword: kind,
+            range: default_range(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {
     Assignment,
     As,
+    Arrow,
     Plus,
+    PlusEqual,
     Minus,
+    MinusEqual,
     Mult,
+    MultEqual,
     Divide,
+    DivideEqual,
     Percent,
+    PercentEqual,
     Dot,
     BitOr,
+    BitOrEqual,
     BitAnd,
+    BitAndEqual,
     BitXor,
+    BitXorEqual,
     LogicalOr,
     LogicalAnd,
     LogicalXor,
@@ -115,18 +138,28 @@ pub enum OperatorKind {
     NLt,
     NEq,
     BitNot,
+    BitNotEqual,
     LogicalNot,
     BitLeft,
+    BitLeftEqual,
     BitRight,
+    BitRightEqual,
     Spread,
-    Arrow,
-    Wildcard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Operator {
-    operator: OperatorKind,
-    range: Range,
+    pub operator: OperatorKind,
+    pub range: Range,
+}
+
+impl Operator {
+    pub const fn create_expect(kind: OperatorKind) -> TokenKind {
+        TokenKind::Operator(Operator {
+            operator: kind,
+            range: default_range(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,10 +229,38 @@ pub enum TokenKind {
     Percent, */
 }
 
+#[macro_export]
+macro_rules! cast {
+    ($target: expr, $pat: path) => {{
+        if let $pat(a) = $target {
+            // #1
+            a
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
+        }
+    }};
+    ($target: expr, $pat: path, 2) => {{
+        if let $pat(a, b) = $target {
+            // #1
+            (a, b)
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
+        }
+    }};
+    ($target: expr, $pat: path, 3) => {{
+        if let $pat(a, b, c) = $target {
+            // #1
+            (a, b, c)
+        } else {
+            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
+        }
+    }};
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenKind,
-    range: Range,
+    pub range: Range,
 }
 
 impl Token {
@@ -216,7 +277,7 @@ pub struct Position {
 
 pub type Range = (Position, Position);
 
-fn default_range() -> Range {
+pub const fn default_range() -> Range {
     (
         Position {
             character: 0,
@@ -337,7 +398,6 @@ impl<'a> TokenIterator<'a> {
 }
 
 pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
-    println!("{:?}", *KEYWORD_TRIE);
     let mut result = Vec::new();
 
     let mut it = TokenIterator::from(input.chars());
@@ -364,14 +424,14 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                     range: (start_pos, end_pos),
                 }
             }
-            '\'' => {
+            '\'' | '"' => {
                 let start_pos = Position { line, character };
                 it.next();
                 character += 1;
                 let mut text = String::new();
                 while let Some(c) = it.next() {
                     match c {
-                        '\'' => break,
+                        '\'' | '"' => break,
                         _ => text.insert(text.len(), c),
                     }
                 }
@@ -404,15 +464,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                             '#' => TokenKind::Pound,
                             _ => TokenKind::Operator(Operator {
                                 operator: match c {
-                                    '~' => OperatorKind::BitNot,
                                     '=' => match it.peek() {
                                         Some('=') => {
                                             it.next();
                                             OperatorKind::Eq
-                                        }
-                                        Some('>') => {
-                                            it.next();
-                                            OperatorKind::Arrow
                                         }
                                         _ => {
                                             it.next();
@@ -423,10 +478,6 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         Some('.') => {
                                             it.next();
                                             OperatorKind::Spread
-                                        }
-                                        Some('*') => {
-                                            it.next();
-                                            OperatorKind::Wildcard
                                         }
                                         _ => OperatorKind::Dot,
                                     },
@@ -452,7 +503,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         Some(c) => match c {
                                             '<' => {
                                                 it.next();
-                                                OperatorKind::BitLeft
+                                                match it.peek() {
+                                                    Some('=') => OperatorKind::BitLeftEqual,
+                                                    _ => OperatorKind::BitLeft,
+                                                }
                                             }
                                             '=' => {
                                                 it.next();
@@ -466,7 +520,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         Some(c) => match c {
                                             '>' => {
                                                 it.next();
-                                                OperatorKind::BitRight
+                                                match it.peek() {
+                                                    Some('=') => OperatorKind::BitRightEqual,
+                                                    _ => OperatorKind::BitRight,
+                                                }
                                             }
                                             '=' => {
                                                 it.next();
@@ -476,14 +533,69 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                         },
                                         _ => OperatorKind::Gt,
                                     },
-                                    '-' => OperatorKind::Minus,
-                                    '&' => OperatorKind::BitAnd,
-                                    '|' => OperatorKind::BitOr,
-                                    '+' => OperatorKind::Plus,
-                                    '*' => OperatorKind::Mult,
-                                    '/' => OperatorKind::Divide,
-                                    '^' => OperatorKind::BitXor,
-                                    '%' => OperatorKind::Percent,
+                                    '-' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::MinusEqual
+                                        }
+                                        _ => OperatorKind::Minus,
+                                    },
+                                    '&' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::BitAndEqual
+                                        }
+                                        _ => OperatorKind::BitAnd,
+                                    },
+                                    '~' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::BitNotEqual
+                                        }
+                                        _ => OperatorKind::BitNot,
+                                    },
+                                    '|' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::BitOrEqual
+                                        }
+                                        _ => OperatorKind::BitOr,
+                                    },
+                                    '^' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::BitXorEqual
+                                        }
+                                        _ => OperatorKind::BitXor,
+                                    },
+                                    '+' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::PlusEqual
+                                        }
+                                        _ => OperatorKind::Plus,
+                                    },
+                                    '*' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::MultEqual
+                                        }
+                                        _ => OperatorKind::Mult,
+                                    },
+                                    '/' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::DivideEqual
+                                        }
+                                        _ => OperatorKind::Divide,
+                                    },
+                                    '%' => match it.peek() {
+                                        Some('=') => {
+                                            it.next();
+                                            OperatorKind::PercentEqual
+                                        }
+                                        _ => OperatorKind::Percent,
+                                    },
                                     _ => continue,
                                 },
                                 range: (start_position, end_position),
@@ -611,11 +723,10 @@ fn get_ident(c: char, iter: &mut TokenIterator) -> (TokenKind, usize) {
     };
     while let Some(nc) = iter.peek() {
         match nc {
-            'a'..='z' => {
+            'a'..='z' | '0'..='9' => {
                 ident.push(*nc);
                 match keyword {
                     Some(trie) => {
-                        println!("Here");
                         keyword = trie.next(*nc);
                     }
                     _ => (),
