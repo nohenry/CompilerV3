@@ -3,8 +3,9 @@ use std::ffi::CString;
 use llvm_sys::{
     c_str,
     core::{
-        LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildRetVoid, LLVMBuildStore,
-        LLVMFunctionType, LLVMPositionBuilderAtEnd,
+        LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildLoad2, LLVMBuildRetVoid,
+        LLVMBuildStore, LLVMClearInsertionPosition, LLVMFunctionType, LLVMInt1Type,
+        LLVMPositionBuilder, LLVMPositionBuilderAtEnd, LLVMVoidType, LLVMInstructionRemoveFromParent,
     },
 };
 
@@ -12,9 +13,10 @@ use crate::{
     ast::{FunctionDecleration, ParseNode, VariableDecleration},
     cast,
     lexer::TokenKind,
+    util::NULL_STR,
 };
 
-use super::{module::Module, SymbolValue, Value};
+use super::{module::Module, SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_parse_node(&self, node: &ParseNode) {
@@ -28,27 +30,75 @@ impl Module {
                 variable_type,
                 ..
             }) => {
+                // let block = LLVMAppendBasicBlock(Fn, Name)
                 let ty = if let Some(ty) = variable_type {
                     self.gen_type(ty.as_ref())
-                } else if let Some((init, ..)) = possible_initializer {
-                    self.gen_node_type(init.as_ref())
                 } else {
-                    return;
-                };
-
-                let var = unsafe { LLVMBuildAlloca(self.builder, ty.llvm_type, c_str!("")) };
-
-                if let Some((init, ..)) = possible_initializer {
-                    let value = self.gen_expression(init.as_ref());
-                    unsafe {
-                        LLVMBuildStore(self.builder, value.llvm_value, var);
+                    Type::Integer {
+                        llvm_type: unsafe { LLVMInt1Type() },
+                        signed: false,
                     }
+                };
+                let nop = unsafe { LLVMBuildAlloca(self.builder, LLVMInt1Type(), c_str!("nop")) };
+
+                let (place_var, ty) = if let Some((init, ..)) = possible_initializer {
+                    let value = self.gen_expression(init.as_ref());
+
+                    unsafe {
+                        LLVMPositionBuilder(
+                            self.builder,
+                            self.current_block.borrow().as_mut().unwrap(),
+                            nop,
+                        )
+                    }
+
+                    let var = unsafe {
+                        LLVMBuildAlloca(self.builder, value.get_type().get_type(), NULL_STR)
+                    };
+
+                    unsafe {
+                        LLVMPositionBuilderAtEnd(
+                            self.builder,
+                            self.current_block.borrow().as_mut().unwrap(),
+                        )
+                    }
+
+                    match value {
+                        Value::Literal { llvm_value, .. } => unsafe {
+                            LLVMBuildStore(self.builder, llvm_value, var);
+                        },
+                        Value::Variable {
+                            llvm_value,
+                            ref variable_type,
+                        } => unsafe {
+                            let load = LLVMBuildLoad2(
+                                self.builder,
+                                variable_type.get_type(),
+                                llvm_value,
+                                NULL_STR,
+                            );
+                            LLVMBuildStore(self.builder, load, var);
+                        },
+                        _ => (),
+                    }
+
+                    (var, value.get_type().clone())
+                } else {
+                    let place_var =
+                        unsafe { LLVMBuildAlloca(self.builder, ty.get_type(), NULL_STR) };
+                    (place_var, ty)
+                };
+                unsafe {
+                    LLVMInstructionRemoveFromParent(nop);
                 }
 
                 let name = cast!(&identifier.token_type, TokenKind::Ident);
                 self.get_current_mut(|f| {
                     if let Some(sym) = f {
-                        let var_value = Value::new(var, Box::new(ty));
+                        let var_value = Value::Variable {
+                            llvm_value: place_var,
+                            variable_type: ty.clone(),
+                        };
                         sym.add_child(name, SymbolValue::Variable(var_value));
                     }
                 })
@@ -66,7 +116,7 @@ impl Module {
 
                 unsafe {
                     let func_type =
-                        LLVMFunctionType(return_type.llvm_type, std::ptr::null_mut(), 0, 0);
+                        LLVMFunctionType(return_type.get_type(), std::ptr::null_mut(), 0, 0);
                     let func = LLVMAddFunction(self.module, name.as_ptr(), func_type);
 
                     let block = LLVMAppendBasicBlock(func, c_str!(""));

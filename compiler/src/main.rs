@@ -35,6 +35,7 @@ mod code_generation;
 mod lexer;
 mod parser;
 mod trie;
+mod util;
 
 fn create_target_machine() -> LLVMTargetMachineRef {
     unsafe {
@@ -157,6 +158,7 @@ fn main() {
     }
 
     let ast = parser::parse_from_tokens(&ltokens).unwrap();
+    println!("AST {}", ast);
 
     let name = CString::new(path.to_str().unwrap()).expect("Unable to create model name");
 

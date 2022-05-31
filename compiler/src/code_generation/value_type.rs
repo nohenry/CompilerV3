@@ -9,42 +9,64 @@ use super::module::Module;
 impl Module {
     pub(super) fn gen_type(&self, _type: &Type) -> super::Type {
         match _type {
-            Type::Int(s, _) => unsafe { super::Type::new(LLVMIntType(*s as _), true) },
-            Type::Unit => unsafe { super::Type::new(LLVMVoidType(), false) },
+            Type::Int(s, _) => unsafe {
+                super::Type::Integer {
+                    llvm_type: LLVMIntType(*s as _),
+                    signed: false,
+                }
+            },
+            Type::Unit => unsafe {
+                super::Type::Unit {
+                    llvm_type: LLVMVoidType(),
+                }
+            },
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
-                super::Type::empty()
+                super::Type::Empty
             }
         }
     }
 
     pub(super) fn gen_literal_type(&self, literal: &Literal) -> super::Type {
         match literal {
-            Literal::Integer(..) => super::Type::new(unsafe { LLVMInt32Type() }, false),
-            Literal::Float(..) => super::Type::new(unsafe { LLVMFloatType() }, false),
-            Literal::Boolean(..) => super::Type::new(unsafe { LLVMInt1Type() }, false),
+            Literal::Integer(..) => super::Type::Integer {
+                llvm_type: unsafe { LLVMInt32Type() },
+                signed: false,
+            },
+            Literal::Float(..) => super::Type::Float {
+                llvm_type: unsafe { LLVMFloatType() },
+            },
+            Literal::Boolean(..) => super::Type::Boolean {
+                llvm_type: unsafe { LLVMInt1Type() },
+            },
             Literal::Array(ArrayInitializer { elements, .. }) => {
-                let array_type = unsafe {
-                    LLVMArrayType(
-                        self.gen_node_type(&elements[0]).llvm_type,
-                        elements.len() as _,
-                    )
-                };
-                super::Type::new(array_type, false)
+                let ttype = self.gen_node_type(&elements[0], false);
+                let array_type = unsafe { LLVMArrayType(ttype.get_type(), elements.len() as _) };
+
+                super::Type::Array {
+                    llvm_type: array_type,
+                    base_type: Box::new(ttype),
+                }
             }
             _ => {
                 self.add_error(String::from("Unable to generate type from expression"));
-                super::Type::empty()
+                super::Type::Empty
             }
         }
     }
 
-    pub(super) fn gen_node_type(&self, expression: &Expression) -> super::Type {
+    pub(super) fn gen_node_type(
+        &self,
+        expression: &Expression,
+        supress_error: bool,
+    ) -> super::Type {
         match expression {
             Expression::Literal(literal) => self.gen_literal_type(literal),
             _ => {
-                self.add_error(String::from("Unable to generate type from expression"));
-                super::Type::empty()
+                if !supress_error {
+                    self.add_error(String::from("Unable to generate type from expression"));
+                }
+                super::Type::Empty
             }
         }
     }
