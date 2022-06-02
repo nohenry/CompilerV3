@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use dsl_llvm::IRBuilder;
 use llvm_sys::{
     core::LLVMCreateBuilder,
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef},
@@ -11,7 +12,7 @@ use llvm_sys::{
 
 use dsl_lexer::ast::ParseNode;
 
-use super::CodeGenError;
+use dsl_errors::CodeGenError;
 use dsl_symbol::{Symbol, SymbolValue};
 
 pub struct Module {
@@ -19,7 +20,7 @@ pub struct Module {
     pub(super) ast: Box<ParseNode>,
     pub(super) module: LLVMModuleRef,
     pub(super) current_block: Rc<RefCell<LLVMBasicBlockRef>>,
-    pub(super) builder: LLVMBuilderRef,
+    pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
     pub(super) symbol_root: Rc<RefCell<Symbol>>,
     pub(super) current_symbol: Vec<String>,
@@ -48,7 +49,7 @@ impl Module {
             ast,
             module,
             current_block: Rc::new(RefCell::new(std::ptr::null_mut())),
-            builder: unsafe { LLVMCreateBuilder() },
+            builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,
             current_symbol: vec![name.clone()],

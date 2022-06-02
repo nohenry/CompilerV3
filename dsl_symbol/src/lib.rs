@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use llvm_sys::{prelude::{LLVMTypeRef, LLVMValueRef}, core::LLVMVoidType};
+use llvm_sys::{
+    core::LLVMVoidType,
+    prelude::{LLVMTypeRef, LLVMValueRef},
+};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -13,6 +16,13 @@ pub enum Value {
         llvm_value: LLVMValueRef,
         variable_type: Type,
     },
+    Instruction {
+        llvm_value: LLVMValueRef,
+    },
+    Load {
+        llvm_value: LLVMValueRef,
+        load_type: Type,
+    },
 }
 
 impl Value {
@@ -20,7 +30,15 @@ impl Value {
         match self {
             Self::Literal { literal_type, .. } => literal_type,
             Self::Variable { variable_type, .. } => variable_type,
-            Self::Empty => panic!("Called on unkown value!"),
+            Self::Load { load_type, .. } => load_type,
+            Self::Empty | Self::Instruction { .. } => panic!("Called on unkown value!"),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Value::Empty => true,
+            _ => false,
         }
     }
 }

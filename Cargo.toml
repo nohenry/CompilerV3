@@ -10,4 +10,5 @@ members = [
     "dsl_util",
     "dsl_trie",
     "dsl_symbol",
+    "dsl_errors",
 ]

@@ -8,7 +8,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "name": "Windows",
-            "program": "${workspaceRoot}/target/debug/compiler.exe",
+            "program": "${workspaceRoot}/target/debug/dsl_compiler.exe",
             "cwd": "${workspaceRoot}"
         },
         {

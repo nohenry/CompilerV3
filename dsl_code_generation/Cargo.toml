@@ -10,4 +10,6 @@ dsl_parser= {path = "../dsl_parser"}
 dsl_util = {path = "../dsl_util"}
 dsl_lexer = {path = "../dsl_lexer"}
 dsl_symbol = {path = "../dsl_symbol"}
+dsl_errors= {path = "../dsl_errors"}
+dsl_llvm = {path = "../dsl_llvm"}
 llvm-sys = {path ="../llvm-sys"}

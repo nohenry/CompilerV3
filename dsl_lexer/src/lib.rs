@@ -1,28 +1,11 @@
-use std::{ fmt, str::Chars};
+use std::str::Chars;
 
 use dsl_macros::*;
 
 pub mod ast;
 use ast::Literal;
 
-#[derive(Debug, Clone)]
-pub struct LexError {
-    error: String,
-}
-
-impl fmt::Display for LexError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.error)
-    }
-}
-
-impl LexError {
-    fn new(error: &String) -> Self {
-        LexError {
-            error: error.clone(),
-        }
-    }
-}
+use dsl_errors::LexError;
 
 #[make_keywords]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -230,8 +213,6 @@ pub enum TokenKind {
     /// "%"
     Percent, */
 }
-
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
@@ -614,7 +595,7 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                 }
             }
             _ => {
-                return Err(LexError::new(&format!("Unexpected character {}", c)));
+                return Err(LexError::new(format!("Unexpected character {}", c)));
             }
         };
         result.push(token);
@@ -648,7 +629,7 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
             Ok(d) => Ok(d),
             Err(e) => match c {
                 '0'..='9' | 'a'..='z' | 'A'..='Z' => {
-                    err = Err(LexError::new(&format!("{} {:?}", e, e.kind())));
+                    err = Err(LexError::new(format!("{} {:?}", e, e.kind())));
                     Err(e)
                 }
                 _ => Err(e),
@@ -676,7 +657,7 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
 
     if dec && !just_dec {
         if base != 10 {
-            Err(LexError::new(&String::from(
+            Err(LexError::new(String::from(
                 "Unable to create floating point value with non decimal base!",
             )))
         } else {

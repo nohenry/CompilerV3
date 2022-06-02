@@ -1,8 +1,5 @@
 #![feature(linked_list_cursors)]
-use std::{
-    collections::{linked_list::Cursor, LinkedList},
-    fmt,
-};
+use std::collections::{linked_list::Cursor, LinkedList};
 
 use dsl_lexer::ast::{
     ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, ExpressionIndex,
@@ -13,24 +10,7 @@ use dsl_lexer::ast::{
 };
 use dsl_lexer::{default_range, Keyword, KeywordKind, Operator, OperatorKind, Token, TokenKind};
 
-#[derive(Debug)]
-pub struct ParseError {
-    error: String,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.error)
-    }
-}
-
-impl ParseError {
-    fn new(error: &String) -> Self {
-        ParseError {
-            error: error.clone(),
-        }
-    }
-}
+use dsl_errors::ParseError;
 
 pub fn parse_from_tokens(tokens: &LinkedList<&Token>) -> Result<ParseNode, ParseError> {
     let mut it = tokens.cursor_front();

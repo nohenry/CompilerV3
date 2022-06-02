@@ -65,7 +65,9 @@ dependencies = [
 name = "dsl_code_generation"
 version = "0.1.0"
 dependencies = [
+ "dsl_errors",
  "dsl_lexer",
+ "dsl_llvm",
  "dsl_parser",
  "dsl_symbol",
  "dsl_util",
@@ -86,9 +88,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsl_errors"
+version = "0.1.0"
+
+[[package]]
 name = "dsl_lexer"
 version = "0.1.0"
 dependencies = [
+ "dsl_errors",
  "dsl_macros",
  "dsl_trie",
  "dsl_util",
@@ -100,6 +107,7 @@ name = "dsl_llvm"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "dsl_errors",
  "dsl_symbol",
  "dsl_util",
  "llvm-sys",
@@ -118,6 +126,7 @@ dependencies = [
 name = "dsl_parser"
 version = "0.1.0"
 dependencies = [
+ "dsl_errors",
  "dsl_lexer",
 ]
 

@@ -1,3 +1,4 @@
+use dsl_errors::go;
 use llvm_sys::{
     core::{
         LLVMBuildBinOp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg, LLVMBuildStore,
@@ -8,9 +9,9 @@ use llvm_sys::{
 
 use dsl_lexer::ast::{BinaryExpression, Expression, ExpressionIndex, UnaryExpression};
 use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::{NULL_STR, c_str, cast};
+use dsl_util::{c_str, cast, NULL_STR};
 
-use super::{module::Module};
+use super::module::Module;
 use dsl_symbol::{SymbolValue, Type, Value};
 
 impl Module {
@@ -27,19 +28,8 @@ impl Module {
                     Assignment => {
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
-                        match (left, right) {
-                            (
-                                Value::Variable {
-                                    llvm_value: lvalue, ..
-                                },
-                                Value::Literal {
-                                    llvm_value: rvalue, ..
-                                },
-                            ) => unsafe {
-                                LLVMBuildStore(self.builder, rvalue, lvalue);
-                            },
-                            _ => (),
-                        }
+
+                        go!(self, self.builder.create_store(&left, &right), Value);
 
                         return Value::Empty;
                     }
@@ -74,28 +64,10 @@ impl Module {
 
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
-                        match (left, right) {
-                            (
-                                Value::Variable {
-                                    llvm_value: lvalue,
-                                    variable_type: ltype,
-                                },
-                                Value::Literal {
-                                    llvm_value: rvalue, ..
-                                },
-                            ) => unsafe {
-                                let load = LLVMBuildLoad2(
-                                    self.builder,
-                                    ltype.get_type(),
-                                    lvalue,
-                                    NULL_STR,
-                                );
-                                let result =
-                                    LLVMBuildBinOp(self.builder, oper, load, rvalue, NULL_STR);
-                                LLVMBuildStore(self.builder, result, lvalue);
-                            },
-                            _ => (),
-                        }
+
+                        let op = go!(self, self.builder.create_bin_op(&left, &right, oper), Value);
+                        go!(self, self.builder.create_store(&left, &op), Value);
+
                         // load modify and store value for op=
                         return Value::Empty;
                     }
@@ -104,31 +76,7 @@ impl Module {
                 let left = self.gen_expression(left);
                 let right = self.gen_expression(right);
 
-                let (value, vtype) = match (left, right) {
-                    (
-                        Value::Literal {
-                            llvm_value: lvalue,
-                            literal_type: ltype,
-                        },
-                        Value::Literal {
-                            llvm_value: rvalue, ..
-                        },
-                    ) => unsafe {
-                        (
-                            LLVMBuildBinOp(self.builder, func, lvalue, rvalue, c_str!("")),
-                            ltype,
-                        )
-                    },
-                    _ => {
-                        // TODO: ERROR
-                        return Value::Empty;
-                    }
-                };
-
-                Value::Literal {
-                    llvm_value: value,
-                    literal_type: vtype,
-                }
+                go!(self, self.builder.create_bin_op(&left, &right, func), Value)
             }
             Expression::UnaryExpression(UnaryExpression {
                 expression,
