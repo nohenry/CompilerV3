@@ -11,14 +11,10 @@ use std::{
     rc::Rc,
 };
 
-use code_generation::{Symbol, SymbolValue};
+use dsl_symbol::Symbol;
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
-    c_str,
-    core::{
-        LLVMAddFunction, LLVMFunctionType, LLVMInt32Type, LLVMModuleCreateWithName,
-        LLVMPrintModuleToFile,
-    },
+    core::{LLVMModuleCreateWithName, LLVMPrintModuleToFile},
     prelude::LLVMModuleRef,
     target::{
         LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetMCs,
@@ -30,12 +26,7 @@ use llvm_sys::{
     },
 };
 
-mod ast;
-mod code_generation;
-mod lexer;
-mod parser;
-mod trie;
-mod util;
+use dsl_util::c_str;
 
 fn create_target_machine() -> LLVMTargetMachineRef {
     unsafe {
@@ -145,19 +136,19 @@ fn main() {
         create_target_machine()
     };
 
-    let mut symbols = Symbol::root();
+    let symbols = Symbol::root();
 
     let path = Path::new("test/test.dsl");
 
     let contents = fs::read_to_string(path).expect("Unable to read file!");
 
-    let tokens = lexer::lex(&contents).unwrap();
+    let tokens = dsl_lexer::lex(&contents).unwrap();
     let mut ltokens = LinkedList::new();
     for tok in &tokens {
         ltokens.push_back(tok);
     }
 
-    let ast = parser::parse_from_tokens(&ltokens).unwrap();
+    let ast = dsl_parser::parse_from_tokens(&ltokens).unwrap();
     println!("AST {}", ast);
 
     let name = CString::new(path.to_str().unwrap()).expect("Unable to create model name");
@@ -169,7 +160,7 @@ fn main() {
         let name = name.into_string().unwrap();
 
         let module =
-            code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
+            dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
 
         module.gen();
 

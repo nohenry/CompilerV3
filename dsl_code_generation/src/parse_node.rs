@@ -1,22 +1,17 @@
 use std::ffi::CString;
 
-use llvm_sys::{
-    c_str,
-    core::{
-        LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildLoad2, LLVMBuildRetVoid,
-        LLVMBuildStore, LLVMClearInsertionPosition, LLVMFunctionType, LLVMInt1Type,
-        LLVMPositionBuilder, LLVMPositionBuilderAtEnd, LLVMVoidType, LLVMInstructionRemoveFromParent,
-    },
+use llvm_sys::core::{
+    LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildLoad2, LLVMBuildRetVoid,
+    LLVMBuildStore, LLVMFunctionType, LLVMGetLastInstruction, LLVMInt1Type, LLVMPositionBuilder,
+    LLVMPositionBuilderAtEnd,
 };
 
-use crate::{
-    ast::{FunctionDecleration, ParseNode, VariableDecleration},
-    cast,
-    lexer::TokenKind,
-    util::NULL_STR,
-};
+use dsl_lexer::ast::{FunctionDecleration, ParseNode, VariableDecleration};
+use dsl_lexer::TokenKind;
+use dsl_util::{c_str, cast, NULL_STR};
 
-use super::{module::Module, SymbolValue, Type, Value};
+use super::module::Module;
+use dsl_symbol::{SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_parse_node(&self, node: &ParseNode) {
@@ -30,7 +25,6 @@ impl Module {
                 variable_type,
                 ..
             }) => {
-                // let block = LLVMAppendBasicBlock(Fn, Name)
                 let ty = if let Some(ty) = variable_type {
                     self.gen_type(ty.as_ref())
                 } else {
@@ -39,7 +33,9 @@ impl Module {
                         signed: false,
                     }
                 };
-                let nop = unsafe { LLVMBuildAlloca(self.builder, LLVMInt1Type(), c_str!("nop")) };
+                let nop = unsafe {
+                    LLVMGetLastInstruction(self.current_block.borrow().as_mut().unwrap())
+                };
 
                 let (place_var, ty) = if let Some((init, ..)) = possible_initializer {
                     let value = self.gen_expression(init.as_ref());
@@ -88,9 +84,6 @@ impl Module {
                         unsafe { LLVMBuildAlloca(self.builder, ty.get_type(), NULL_STR) };
                     (place_var, ty)
                 };
-                unsafe {
-                    LLVMInstructionRemoveFromParent(nop);
-                }
 
                 let name = cast!(&identifier.token_type, TokenKind::Ident);
                 self.get_current_mut(|f| {
@@ -120,7 +113,7 @@ impl Module {
                     let func = LLVMAddFunction(self.module, name.as_ptr(), func_type);
 
                     let block = LLVMAppendBasicBlock(func, c_str!(""));
-                    // self.current_block = block;
+
                     self.current_block.replace(block);
                     LLVMPositionBuilderAtEnd(
                         self.builder,

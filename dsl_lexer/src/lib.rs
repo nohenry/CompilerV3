@@ -1,7 +1,9 @@
-use std::{collections::hash_map::RandomState, fmt, iter::Peekable, str::Chars};
-use trielib::*;
+use std::{ fmt, str::Chars};
 
-use crate::ast::Literal;
+use dsl_macros::*;
+
+pub mod ast;
+use ast::Literal;
 
 #[derive(Debug, Clone)]
 pub struct LexError {
@@ -229,33 +231,7 @@ pub enum TokenKind {
     Percent, */
 }
 
-#[macro_export]
-macro_rules! cast {
-    ($target: expr, $pat: path) => {{
-        if let $pat(a) = $target {
-            // #1
-            a
-        } else {
-            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
-        }
-    }};
-    ($target: expr, $pat: path, 2) => {{
-        if let $pat(a, b) = $target {
-            // #1
-            (a, b)
-        } else {
-            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
-        }
-    }};
-    ($target: expr, $pat: path, 3) => {{
-        if let $pat(a, b, c) = $target {
-            // #1
-            (a, b, c)
-        } else {
-            panic!("mismatch variant when cast to {}", stringify!($pat)); // #2
-        }
-    }};
-}
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {

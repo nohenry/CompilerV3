@@ -1,23 +1,13 @@
-[package]
-name = "CompilerV3"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[lib]
-name = "trielib"
-path = "compiler/src/lib.rs"
-proc-macro = true
-
-[[bin]]
-name = "compiler"
-path = "compiler/src/main.rs"
-
-[dependencies]
-quote = "1.0"
-lazy_static = "1.4.0"
-proc-macro2 = "1.0.32"
-colored = "2"
-# inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm13-0"] }
-# llvm = { path="llvm" }
-llvm-sys = {path="llvm-sys"}
+members = [
+    "dsl_compiler",
+    "dsl_llvm",
+    "dsl_code_generation",
+    "dsl_lexer",
+    "dsl_macros",
+    "dsl_parser",
+    "dsl_util",
+    "dsl_trie",
+    "dsl_symbol",
+]

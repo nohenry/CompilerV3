@@ -1,20 +1,17 @@
 use llvm_sys::{
-    c_str,
     core::{
-        LLVMBuildBinOp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildStore, LLVMConstInt,
-        LLVMInt64Type,
+        LLVMBuildBinOp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg, LLVMBuildStore,
+        LLVMConstInt, LLVMInt64Type,
     },
     LLVMOpcode,
 };
 
-use crate::{
-    ast::{BinaryExpression, Expression, ExpressionIndex},
-    cast,
-    lexer::TokenKind,
-    util::NULL_STR,
-};
+use dsl_lexer::ast::{BinaryExpression, Expression, ExpressionIndex, UnaryExpression};
+use dsl_lexer::{OperatorKind, TokenKind};
+use dsl_util::{NULL_STR, c_str, cast};
 
-use super::{module::Module, SymbolValue, Type, Value};
+use super::{module::Module};
+use dsl_symbol::{SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_expression(&self, expression: &Expression) -> Value {
@@ -25,10 +22,10 @@ impl Module {
                 right,
                 ..
             }) => {
-                use crate::lexer::OperatorKind::*;
+                use dsl_lexer::OperatorKind::*;
                 let func = match operator {
                     Assignment => {
-                        let left = self.gen_expression_ref(left);
+                        let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
                         match (left, right) {
                             (
@@ -75,7 +72,7 @@ impl Module {
                             }
                         };
 
-                        let left = self.gen_expression_ref(left);
+                        let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
                         match (left, right) {
                             (
@@ -133,12 +130,32 @@ impl Module {
                     literal_type: vtype,
                 }
             }
+            Expression::UnaryExpression(UnaryExpression {
+                expression,
+                operator,
+                ..
+            }) => match operator {
+                OperatorKind::Minus => {
+                    let expr = self.gen_expression(&expression);
+                    match expr {
+                        Value::Literal { llvm_value, .. } => unsafe {
+                            // LLVMBuildNeg(self.builder, llvm_value, NULL_STR)
+                            Value::Empty
+                        },
+                        _ => Value::Empty,
+                    }
+                }
+                _ => {
+                    self.add_error(String::from("Unsupproted unary operator!"));
+                    Value::Empty
+                }
+            },
             Expression::Index(ExpressionIndex {
                 index_expression,
                 index_value,
                 ..
             }) => {
-                let left = self.gen_expression_ref(&index_expression);
+                let left = self.gen_expression(&index_expression);
                 let right = self.gen_expression(&index_value);
 
                 let (ivalue, lvalue, ltype, base_type) = match (left, right) {
@@ -173,8 +190,6 @@ impl Module {
                         2,
                         NULL_STR,
                     )
-
-                    // LLVMBuildLoad2(self.builder, base_type.get_type(), ptr, c_str!("Index"))
                 };
 
                 Value::Variable {
@@ -182,16 +197,6 @@ impl Module {
                     variable_type: *base_type,
                 }
             }
-            Expression::Literal(literal) => self.gen_literal(literal),
-            _ => {
-                self.add_error(String::from("Unsupported expression"));
-                Value::Empty
-            }
-        }
-    }
-
-    pub(super) fn gen_expression_ref(&self, expression: &Expression) -> Value {
-        match expression {
             Expression::Identifier(i) => {
                 let str = cast!(&i.token_type, TokenKind::Ident);
 
@@ -203,6 +208,7 @@ impl Module {
                     _ => panic!("sdf"),
                 }
             }
+            Expression::Literal(literal) => self.gen_literal(literal),
             _ => {
                 self.add_error(String::from("Unsupported expression"));
                 Value::Empty

@@ -7,7 +7,6 @@ where
     T: Debug + Copy,
 {
     children: [Option<Box<TrieNode<T>>>; 36],
-    // is_endpoint: bool,
     keyword: Option<T>,
 }
 

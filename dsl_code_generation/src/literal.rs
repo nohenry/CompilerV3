@@ -3,9 +3,10 @@ use llvm_sys::core::{
     LLVMInt32Type,
 };
 
-use crate::ast::{ArrayInitializer, Literal};
+use dsl_lexer::ast::{ArrayInitializer, Literal};
 
-use super::{module::Module, Type, Value};
+use super::{module::Module};
+use dsl_symbol::{ Type, Value};
 
 impl Module {
     pub(super) fn gen_literal(&self, literal: &Literal) -> Value {

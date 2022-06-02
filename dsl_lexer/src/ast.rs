@@ -1,10 +1,7 @@
 use std::fmt::Display;
 
-use crate::{
-    cast,
-    lexer::{default_range, OperatorKind, Range, Token, TokenKind},
-    parser::ParseError,
-};
+use crate::{default_range, OperatorKind, Range, Token, TokenKind};
+use dsl_util::cast;
 
 // pub struct VariableDecleration {
 //     identifier: String,
@@ -296,7 +293,7 @@ pub struct SpecDecleration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpecBody {
-    Function(Token, FunctionSignature)
+    Function(Token, FunctionSignature),
 }
 
 #[derive(Debug, Clone, PartialEq)]

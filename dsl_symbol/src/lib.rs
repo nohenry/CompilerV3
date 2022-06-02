@@ -1,19 +1,6 @@
 use std::collections::HashMap;
 
-use llvm_sys::{
-    core::LLVMVoidType,
-    prelude::{LLVMTypeRef, LLVMValueRef},
-};
-
-mod expression;
-mod literal;
-pub mod module;
-mod parse_node;
-mod value_type;
-
-struct CodeGenError {
-    message: String,
-}
+use llvm_sys::{prelude::{LLVMTypeRef, LLVMValueRef}, core::LLVMVoidType};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -127,16 +114,4 @@ impl Symbol {
         self.children
             .insert(name.clone(), Symbol::new(name.clone(), value));
     }
-
-    // pub fn find_symbol_up(&self, name: &String) -> Option<Rc<RefCell<Symbol>>> {
-    //     if let Some(sym) = self.children.get(name) {
-    //         return Some(sym.clone());
-    //     }
-    //     if let Some(sym) = &self.parent {
-    //         if let Some(sym) = Symbol::find_symbol_up(&sym.borrow_mut(), name) {
-    //             return Some(sym);
-    //         }
-    //     }
-    //     None
-    // }
 }

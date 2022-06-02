@@ -1,19 +1,17 @@
+#![feature(linked_list_cursors)]
 use std::{
     collections::{linked_list::Cursor, LinkedList},
     fmt,
 };
 
-use crate::{
-    ast::{
-        ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression,
-        ExpressionIndex, FunctionCall, FunctionDecleration, FunctionSignature, FunctionType,
-        GenericParameters, GenericType, IfExpression, ImportDecleration, Literal, Loop,
-        LoopExpression, ParseNode, ReferenceType, SpecBody, SpecDecleration, TemplateDecleration,
-        TemplateInitializer, Type, TypeDecleration, TypeSymbol, UnaryExpression,
-        VariableDecleration,
-    },
-    lexer::{default_range, Keyword, KeywordKind, Operator, OperatorKind, Token, TokenKind},
+use dsl_lexer::ast::{
+    ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, ExpressionIndex,
+    FunctionCall, FunctionDecleration, FunctionSignature, FunctionType, GenericParameters,
+    GenericType, IfExpression, ImportDecleration, Literal, Loop, LoopExpression, ParseNode,
+    ReferenceType, SpecBody, SpecDecleration, TemplateDecleration, TemplateInitializer, Type,
+    TypeDecleration, TypeSymbol, UnaryExpression, VariableDecleration,
 };
+use dsl_lexer::{default_range, Keyword, KeywordKind, Operator, OperatorKind, Token, TokenKind};
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -581,32 +579,59 @@ fn parse_operator_expression(
         parse_primary(tokens)
     };
 
-    while let Some(Token {
-        token_type: TokenKind::Operator(o),
-        ..
-    }) = tokens.current()
-    {
-        let prec = binary_precedence(*o);
-        if prec <= prev_prec || prec == 0 {
-            break;
-        }
-        tokens.move_next();
+    while let Some(t) = tokens.current() {
+        match t {
+            Token {
+                token_type: TokenKind::Operator(o),
+                ..
+            } => {
+                let prec = binary_precedence(*o);
+                if prec <= prev_prec || prec == 0 {
+                    break;
+                }
+                tokens.move_next();
 
-        let lleft = left?;
-        let right = parse_expression(tokens, prec)?;
-        let start = lleft.get_range().0;
-        let end = right.get_range().1;
-        let be = BinaryExpression {
-            left: Box::new(lleft),
-            operator: o.operator,
-            right: Box::new(right),
-            range: (start, end),
-        };
-        left = Ok(Expression::BinaryExpression(be));
+                let lleft = left?;
+                let right = parse_expression(tokens, prec)?;
+                let start = lleft.get_range().0;
+                let end = right.get_range().1;
+                let be = BinaryExpression {
+                    left: Box::new(lleft),
+                    operator: o.operator,
+                    right: Box::new(right),
+                    range: (start, end),
+                };
+                left = Ok(Expression::BinaryExpression(be));
+            }
+            token => {
+                let token_type = &token.token_type;
+                let prec = postfix_precedence(token_type);
+                if prec <= prev_prec || prec == 0 {
+                    break;
+                }
+
+                let lleft = left?;
+                match token_type {
+                    TokenKind::OpenParen => return parse_function_call(tokens, lleft),
+                    TokenKind::OpenBracket => {
+                        let ob = expect(tokens, TokenKind::OpenBracket)?;
+                        let value = parse_expression(tokens, 0)?;
+                        let cb = expect(tokens, TokenKind::CloseBracket)?;
+                        let idx = ExpressionIndex {
+                            index_expression: Box::new(lleft),
+                            index_value: Box::new(value),
+                            square_range: (ob.range.0, cb.range.1),
+                        };
+
+                        left = Ok(Expression::Index(idx));
+                    }
+                    _ => return Ok(lleft),
+                }
+            }
+        }
     }
 
     let nleft = left?;
-    let nnleft = nleft.clone();
 
     if let (
         Some(Token {
@@ -614,37 +639,14 @@ fn parse_operator_expression(
             ..
         }),
         Expression::Identifier(t),
-    ) = (tokens.peek_next(), nleft)
+    ) = (tokens.peek_next(), &nleft)
     {
         Ok(Expression::Lambda(
             parse_function_type(tokens, Some((tokens.current().unwrap(), &t)))?,
             Box::new(parse_statement(tokens)?),
         ))
     } else {
-        while let Some(Token { token_type, .. }) = tokens.current() {
-            let prec = postfix_precedence(token_type);
-            if prec <= prev_prec || prec == 0 {
-                break;
-            }
-            match token_type {
-                TokenKind::OpenParen => return parse_function_call(tokens, nnleft),
-                TokenKind::OpenBracket => {
-                    let ob = expect(tokens, TokenKind::OpenBracket)?;
-                    let value = parse_expression(tokens, 0)?;
-                    let cb = expect(tokens, TokenKind::CloseBracket)?;
-                    let idx = ExpressionIndex {
-                        index_expression: Box::new(nnleft),
-                        index_value: Box::new(value),
-                        square_range: (ob.range.0, cb.range.1),
-                    };
-
-                    return Ok(Expression::Index(idx));
-                }
-                _ => return Ok(nnleft),
-            }
-        }
-
-        Ok(nnleft)
+        Ok(nleft)
     }
 }
 

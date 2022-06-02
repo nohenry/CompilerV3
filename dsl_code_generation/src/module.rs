@@ -9,9 +9,10 @@ use llvm_sys::{
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef},
 };
 
-use crate::ast::ParseNode;
+use dsl_lexer::ast::ParseNode;
 
-use super::{CodeGenError, Symbol, SymbolValue};
+use super::CodeGenError;
+use dsl_symbol::{Symbol, SymbolValue};
 
 pub struct Module {
     // pub(super) name: String,

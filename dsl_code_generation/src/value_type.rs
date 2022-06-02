@@ -2,55 +2,55 @@ use llvm_sys::core::{
     LLVMArrayType, LLVMFloatType, LLVMInt1Type, LLVMInt32Type, LLVMIntType, LLVMVoidType,
 };
 
-use crate::ast::{ArrayInitializer, Expression, Literal, Type};
+use dsl_lexer::ast::{ArrayInitializer, Expression, Literal, Type};
 
 use super::module::Module;
 
 impl Module {
-    pub(super) fn gen_type(&self, _type: &Type) -> super::Type {
+    pub(super) fn gen_type(&self, _type: &Type) -> dsl_symbol::Type {
         match _type {
             Type::Int(s, _) => unsafe {
-                super::Type::Integer {
+                dsl_symbol::Type::Integer {
                     llvm_type: LLVMIntType(*s as _),
                     signed: false,
                 }
             },
             Type::Unit => unsafe {
-                super::Type::Unit {
+                dsl_symbol::Type::Unit {
                     llvm_type: LLVMVoidType(),
                 }
             },
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
-                super::Type::Empty
+                dsl_symbol::Type::Empty
             }
         }
     }
 
-    pub(super) fn gen_literal_type(&self, literal: &Literal) -> super::Type {
+    pub(super) fn gen_literal_type(&self, literal: &Literal) -> dsl_symbol::Type {
         match literal {
-            Literal::Integer(..) => super::Type::Integer {
+            Literal::Integer(..) => dsl_symbol::Type::Integer {
                 llvm_type: unsafe { LLVMInt32Type() },
                 signed: false,
             },
-            Literal::Float(..) => super::Type::Float {
+            Literal::Float(..) => dsl_symbol::Type::Float {
                 llvm_type: unsafe { LLVMFloatType() },
             },
-            Literal::Boolean(..) => super::Type::Boolean {
+            Literal::Boolean(..) => dsl_symbol::Type::Boolean {
                 llvm_type: unsafe { LLVMInt1Type() },
             },
             Literal::Array(ArrayInitializer { elements, .. }) => {
                 let ttype = self.gen_node_type(&elements[0], false);
                 let array_type = unsafe { LLVMArrayType(ttype.get_type(), elements.len() as _) };
 
-                super::Type::Array {
+                dsl_symbol::Type::Array {
                     llvm_type: array_type,
                     base_type: Box::new(ttype),
                 }
             }
             _ => {
                 self.add_error(String::from("Unable to generate type from expression"));
-                super::Type::Empty
+                dsl_symbol::Type::Empty
             }
         }
     }
@@ -59,14 +59,14 @@ impl Module {
         &self,
         expression: &Expression,
         supress_error: bool,
-    ) -> super::Type {
+    ) -> dsl_symbol::Type {
         match expression {
             Expression::Literal(literal) => self.gen_literal_type(literal),
             _ => {
                 if !supress_error {
                     self.add_error(String::from("Unable to generate type from expression"));
                 }
-                super::Type::Empty
+                dsl_symbol::Type::Empty
             }
         }
     }

@@ -1,10 +1,8 @@
-
 extern crate proc_macro;
-use proc_macro::{Delimiter, Ident, TokenStream};
+use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree};
 use quote::quote;
 
-mod trie;
 
 #[proc_macro]
 pub fn create_entry(items: TokenStream) -> TokenStream {
@@ -43,7 +41,7 @@ pub fn create_entry(items: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn make_keywords(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn make_keywords(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let tree = proc_macro2::TokenStream::from(item);
     let new_item = tree.clone();
     let mut new_tree = quote! {};
@@ -82,11 +80,10 @@ pub fn make_keywords(attr: TokenStream, item: TokenStream) -> TokenStream {
         _ => (),
     }
     new_tree = quote! {
-        use crate::trie;
         use lazy_static::lazy_static;
         lazy_static! {
-            static ref KEYWORD_TRIE: trie::TrieNode::<#enum_type> = {
-                let mut root_node = trie::TrieNode::<#enum_type>::new();
+            static ref KEYWORD_TRIE: dsl_trie::TrieNode::<#enum_type> = {
+                let mut root_node = dsl_trie::TrieNode::<#enum_type>::new();
                 #new_tree
                 root_node
             };

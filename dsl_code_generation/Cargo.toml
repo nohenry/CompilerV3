@@ -1,0 +1,13 @@
+[package]
+name = "dsl_code_generation"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dsl_parser= {path = "../dsl_parser"}
+dsl_util = {path = "../dsl_util"}
+dsl_lexer = {path = "../dsl_lexer"}
+dsl_symbol = {path = "../dsl_symbol"}
+llvm-sys = {path ="../llvm-sys"}
