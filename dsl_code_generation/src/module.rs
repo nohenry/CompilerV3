@@ -7,7 +7,7 @@ use std::{
 use dsl_llvm::IRBuilder;
 use llvm_sys::{
     core::LLVMCreateBuilder,
-    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef},
+    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMValueRef},
 };
 
 use dsl_lexer::ast::ParseNode;
@@ -20,6 +20,7 @@ pub struct Module {
     pub(super) ast: Box<ParseNode>,
     pub(super) module: LLVMModuleRef,
     pub(super) current_block: Rc<RefCell<LLVMBasicBlockRef>>,
+    pub(super) current_function: Rc<RefCell<LLVMValueRef>>,
     pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
     pub(super) symbol_root: Rc<RefCell<Symbol>>,
@@ -49,6 +50,7 @@ impl Module {
             ast,
             module,
             current_block: Rc::new(RefCell::new(std::ptr::null_mut())),
+            current_function: Rc::new(RefCell::new(std::ptr::null_mut())),
             builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,

@@ -1,15 +1,15 @@
 use dsl_errors::go;
-use llvm_sys::{
-    core::{
-        LLVMBuildBinOp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg, LLVMBuildStore,
-        LLVMConstInt, LLVMInt64Type,
-    },
-    LLVMOpcode,
-};
+use llvm_sys::LLVMOpcode;
 
-use dsl_lexer::ast::{BinaryExpression, Expression, ExpressionIndex, UnaryExpression};
+use dsl_lexer::ast::{
+    BinaryExpression, Expression, ExpressionIndex, IfExpression, UnaryExpression,
+};
 use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::{c_str, cast, NULL_STR};
+use dsl_util::{cast, NULL_STR};
+use llvm_sys::core::{
+    LLVMAppendBasicBlock, LLVMBuildBr, LLVMBuildCondBr, LLVMCreateBasicBlockInContext,
+    LLVMGetGlobalContext, LLVMGetLastInstruction, LLVMPositionBuilder, LLVMPositionBuilderAtEnd,
+};
 
 use super::module::Module;
 use dsl_symbol::{SymbolValue, Type, Value};
@@ -85,11 +85,40 @@ impl Module {
             }) => match operator {
                 OperatorKind::Minus => {
                     let expr = self.gen_expression(&expression);
-                    match expr {
-                        Value::Literal { llvm_value, .. } => unsafe {
-                            // LLVMBuildNeg(self.builder, llvm_value, NULL_STR)
-                            Value::Empty
+
+                    go!(self, self.builder.create_neg(&expr), Value)
+                }
+                OperatorKind::BitAnd => {
+                    let value = self.gen_expression(&expression);
+
+                    match value {
+                        Value::Variable {
+                            llvm_value,
+                            variable_type,
+                        } => Value::Literal {
+                            llvm_value,
+                            literal_type: self.builder.get_ptr(&variable_type),
                         },
+                        _ => Value::Empty,
+                    }
+                }
+                OperatorKind::Mult => {
+                    let value = self.gen_expression(&expression);
+                    match &value {
+                        Value::Variable { .. } => {
+                            let value = go!(self, self.builder.create_load(&value), Value);
+
+                            match value {
+                                Value::Literal {
+                                    llvm_value,
+                                    literal_type: Type::Reference { base_type, .. },
+                                } => Value::Variable {
+                                    llvm_value,
+                                    variable_type: *base_type,
+                                },
+                                _ => Value::Empty,
+                            }
+                        }
                         _ => Value::Empty,
                     }
                 }
@@ -106,44 +135,29 @@ impl Module {
                 let left = self.gen_expression(&index_expression);
                 let right = self.gen_expression(&index_value);
 
-                let (ivalue, lvalue, ltype, base_type) = match (left, right) {
+                let base_type = match (&left, &right) {
                     (
                         Value::Variable {
-                            llvm_value: lvalue,
-                            variable_type:
-                                Type::Array {
-                                    llvm_type: ltype,
-                                    base_type,
-                                },
+                            variable_type: Type::Array { base_type, .. },
+                            ..
                         },
-                        Value::Literal {
-                            llvm_value: rvalue, ..
-                        },
-                    ) => (rvalue, lvalue, ltype, base_type),
+                        Value::Literal { .. },
+                    ) => base_type.clone(),
                     _ => {
                         // TODO: ERROR
                         return Value::Empty;
                     }
                 };
 
-                let value = unsafe {
-                    let index0 = LLVMConstInt(LLVMInt64Type(), 0, 0);
-                    let mut indicies = [index0, ivalue];
+                let index0 = self.builder.create_literal(&self.builder.get_uint_64(), 0);
+                let indicies = [index0, right];
 
-                    LLVMBuildInBoundsGEP2(
-                        self.builder,
-                        ltype,
-                        lvalue,
-                        indicies.as_mut_ptr(),
-                        2,
-                        NULL_STR,
-                    )
-                };
-
-                Value::Variable {
-                    llvm_value: value,
-                    variable_type: *base_type,
-                }
+                go!(
+                    self,
+                    self.builder
+                        .create_gep_inbound(&left, *base_type, &indicies),
+                    Value
+                )
             }
             Expression::Identifier(i) => {
                 let str = cast!(&i.token_type, TokenKind::Ident);
@@ -157,6 +171,71 @@ impl Module {
                 }
             }
             Expression::Literal(literal) => self.gen_literal(literal),
+            Expression::IfExpression(IfExpression {
+                condition,
+                body,
+                else_clause,
+                ..
+            }) => {
+                let condition = self.gen_expression(&condition);
+
+                let if_body = unsafe {
+                    LLVMAppendBasicBlock(self.current_function.borrow().as_mut().unwrap(), NULL_STR)
+                };
+
+                if let Some((_, ec)) = else_clause {
+                    let else_body = unsafe {
+                        LLVMAppendBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            NULL_STR,
+                        )
+                    };
+
+                    let end = unsafe {
+                        LLVMAppendBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            NULL_STR,
+                        )
+                    };
+
+                    go!(
+                        self,
+                        self.builder.create_cbranch(&condition, if_body, else_body),
+                        Value
+                    );
+
+                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), if_body) }
+                    self.gen_parse_node(&body);
+                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
+
+                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), else_body) }
+                    self.gen_parse_node(&ec);
+                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
+
+                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), end) }
+                } else {
+                    let end = unsafe {
+                        LLVMAppendBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            NULL_STR,
+                        )
+                    };
+
+                    go!(
+                        self,
+                        self.builder.create_cbranch(&condition, if_body, end),
+                        Value
+                    );
+
+                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), if_body) }
+                    self.gen_parse_node(&body);
+                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
+
+                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), end) }
+                }
+
+                Value::Empty
+            }
             _ => {
                 self.add_error(String::from("Unsupported expression"));
                 Value::Empty

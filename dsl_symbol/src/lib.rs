@@ -63,6 +63,10 @@ pub enum Type {
         llvm_type: LLVMTypeRef,
         base_type: Box<Type>,
     },
+    Reference {
+        llvm_type: LLVMTypeRef,
+        base_type: Box<Type>,
+    },
 }
 
 impl Type {
@@ -80,6 +84,7 @@ impl Type {
             Self::Boolean { llvm_type, .. } => *llvm_type,
             Self::Array { llvm_type, .. } => *llvm_type,
             Self::Unit { llvm_type, .. } => *llvm_type,
+            Self::Reference { llvm_type, .. } => *llvm_type,
             Self::Empty => panic!("Called on unkown value!"),
         }
     }

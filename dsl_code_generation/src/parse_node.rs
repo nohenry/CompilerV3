@@ -1,5 +1,6 @@
 use std::ffi::CString;
 
+use dsl_errors::go;
 use llvm_sys::core::{
     LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildLoad2, LLVMBuildRetVoid,
     LLVMBuildStore, LLVMFunctionType, LLVMGetLastInstruction, LLVMInt1Type, LLVMPositionBuilder,
@@ -14,7 +15,7 @@ use super::module::Module;
 use dsl_symbol::{SymbolValue, Type, Value};
 
 impl Module {
-    pub(super) fn gen_parse_node(&self, node: &ParseNode) {
+    pub(super) fn gen_parse_node(&self, node: &ParseNode) -> Value {
         match node {
             ParseNode::Expression(e, _) => {
                 self.gen_expression(e);
@@ -37,62 +38,30 @@ impl Module {
                     LLVMGetLastInstruction(self.current_block.borrow().as_mut().unwrap())
                 };
 
-                let (place_var, ty) = if let Some((init, ..)) = possible_initializer {
+                let place_var = if let Some((init, ..)) = possible_initializer {
                     let value = self.gen_expression(init.as_ref());
 
-                    unsafe {
-                        LLVMPositionBuilder(
-                            self.builder,
-                            self.current_block.borrow().as_mut().unwrap(),
-                            nop,
-                        )
-                    }
+                    self.builder.set_position(
+                        unsafe { self.current_block.borrow().as_mut().unwrap() },
+                        nop,
+                    );
 
-                    let var = unsafe {
-                        LLVMBuildAlloca(self.builder, value.get_type().get_type(), NULL_STR)
-                    };
+                    let var = go!(self, self.builder.create_alloc(&value.get_type()), Value);
 
-                    unsafe {
-                        LLVMPositionBuilderAtEnd(
-                            self.builder,
-                            self.current_block.borrow().as_mut().unwrap(),
-                        )
-                    }
+                    self.builder
+                        .set_position_end(unsafe { self.current_block.borrow().as_mut().unwrap() });
 
-                    match value {
-                        Value::Literal { llvm_value, .. } => unsafe {
-                            LLVMBuildStore(self.builder, llvm_value, var);
-                        },
-                        Value::Variable {
-                            llvm_value,
-                            ref variable_type,
-                        } => unsafe {
-                            let load = LLVMBuildLoad2(
-                                self.builder,
-                                variable_type.get_type(),
-                                llvm_value,
-                                NULL_STR,
-                            );
-                            LLVMBuildStore(self.builder, load, var);
-                        },
-                        _ => (),
-                    }
-
-                    (var, value.get_type().clone())
+                    go!(self, self.builder.create_store(&var, &value), Value);
+                    var
                 } else {
-                    let place_var =
-                        unsafe { LLVMBuildAlloca(self.builder, ty.get_type(), NULL_STR) };
-                    (place_var, ty)
+                    let place_var = go!(self, self.builder.create_alloc(&ty), Value);
+                    place_var
                 };
 
                 let name = cast!(&identifier.token_type, TokenKind::Ident);
                 self.get_current_mut(|f| {
                     if let Some(sym) = f {
-                        let var_value = Value::Variable {
-                            llvm_value: place_var,
-                            variable_type: ty.clone(),
-                        };
-                        sym.add_child(name, SymbolValue::Variable(var_value));
+                        sym.add_child(name, SymbolValue::Variable(place_var.clone()));
                     }
                 })
             }
@@ -115,20 +84,21 @@ impl Module {
                     let block = LLVMAppendBasicBlock(func, c_str!(""));
 
                     self.current_block.replace(block);
-                    LLVMPositionBuilderAtEnd(
-                        self.builder,
-                        self.current_block.borrow().as_mut().unwrap(),
-                    );
+                    self.builder
+                        .set_position_end(self.current_block.borrow().as_mut().unwrap());
+
+                    self.current_function.replace(func);
                 }
 
                 self.gen_parse_node(body.as_ref());
 
-                unsafe {
-                    LLVMBuildRetVoid(self.builder);
-                }
+                self.builder.create_ret_void();
             }
-            ParseNode::Block(values, _) => values.iter().for_each(|stmt| self.gen_parse_node(stmt)),
+            ParseNode::Block(values, _) => values.iter().for_each(|stmt| {
+                self.gen_parse_node(stmt);
+            }),
             _ => (),
         };
+        Value::Empty
     }
 }

@@ -1,5 +1,7 @@
 
 main() => {
-    let d = [5, 6, 9]
-    let ptr = &d
+    let d = 5
+    if true {
+        d = 6
+    }
 }

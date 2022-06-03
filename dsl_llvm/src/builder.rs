@@ -1,45 +1,11 @@
-// pub struct BasicBlock {
-//     basic_block: LLVMBasicBlockRef,
-// }
-
-// impl BasicBlock {
-//     pub fn create(name: &str, context: &Context, function: &Function) -> Self {
-//         let basic_block = unsafe {
-//             LLVMAppendBasicBlockInContext(
-//                 context.context(),
-//                 function.function(),
-//                 &name.as_bytes()[0] as *const u8,
-//             )
-//         };
-//         BasicBlock { basic_block }
-//     }
-
-//     pub fn basic_block(&self) -> LLVMBasicBlockRef {
-//         self.basic_block
-//     }
-// }
-
-// pub struct Builder {
-//     builder: LLVMBasicBlockRef,
-// }
-
-// impl Builder {
-//     pub fn create(context: &Context) -> Self {
-//         let builder = unsafe { LLVMCreateBuilderInContext(context.context()) };
-//         Builder { builder }
-//     }
-
-//     pub fn position_at_end(&self, basic_block: &BasicBlock) {
-//         unsafe { LLVMPositionBuilderAtEnd(self.builder, basic_block.basic_block()) }
-//     }
-// }
-
+use conv::ApproxInto;
 use dsl_errors::CodeGenError;
 use dsl_util::NULL_STR;
 use llvm_sys::{
     core::{
-        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildStore,
-        LLVMConstInt, LLVMInt64Type, LLVMPositionBuilder, LLVMPositionBuilderAtEnd, LLVMConstReal,
+        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildCondBr, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
+        LLVMBuildNeg, LLVMBuildRetVoid, LLVMBuildStore, LLVMConstInt, LLVMConstReal, LLVMInt64Type,
+        LLVMPointerType, LLVMPositionBuilder, LLVMPositionBuilderAtEnd,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMValueRef},
     LLVMOpcode,
@@ -82,21 +48,30 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_lteral<T>(&self, ty: &Type, value: T) -> Value
+    pub fn get_ptr(&self, base_type: &Type) -> Type {
+        Type::Reference {
+            llvm_type: unsafe { LLVMPointerType(base_type.get_type(), 0) },
+            base_type: Box::new(base_type.clone()),
+        }
+    }
+
+    pub fn create_literal<T>(&self, ty: &Type, value: T) -> Value
     where
-        T: Into<u64> + Into<f64>,
+        T: ApproxInto<u64> + ApproxInto<f64>,
     {
         match ty {
             Type::Integer { llvm_type, signed } => Value::Literal {
                 llvm_value: unsafe {
-                    LLVMConstInt(*llvm_type, value.into(), if *signed { 1 } else { 0 })
+                    LLVMConstInt(
+                        *llvm_type,
+                        value.approx_into().unwrap(),
+                        if *signed { 1 } else { 0 },
+                    )
                 },
                 literal_type: ty.clone(),
             },
             Type::Float { llvm_type } => Value::Literal {
-                llvm_value: unsafe {
-                    LLVMConstReal(*llvm_type, value.into())
-                },
+                llvm_value: unsafe { LLVMConstReal(*llvm_type, value.approx_into().unwrap()) },
                 literal_type: ty.clone(),
             },
             _ => panic!("Unknown literal"),
@@ -123,6 +98,22 @@ impl IRBuilder {
                     let llvm_value = unsafe { LLVMBuildStore(self.builder, *rvalue, *ptr_value) };
                     Ok(Value::Instruction { llvm_value })
                 }
+                Value::Variable {
+                    llvm_value,
+                    variable_type,
+                } => {
+                    let load = unsafe {
+                        LLVMBuildLoad2(
+                            self.builder,
+                            variable_type.get_type(),
+                            *llvm_value,
+                            NULL_STR,
+                        )
+                    };
+
+                    let llvm_value = unsafe { LLVMBuildStore(self.builder, load, *ptr_value) };
+                    Ok(Value::Instruction { llvm_value })
+                }
                 _ => Err(CodeGenError {
                     message: format!("Unable to store value"),
                 }),
@@ -144,13 +135,43 @@ impl IRBuilder {
                 let value = unsafe {
                     LLVMBuildLoad2(self.builder, variable_type.get_type(), *ptr_value, NULL_STR)
                 };
-                Ok(Value::Load {
+                Ok(Value::Literal {
                     llvm_value: value,
-                    load_type: variable_type.clone(),
+                    literal_type: variable_type.clone(),
                 })
             }
             _ => Err(CodeGenError {
                 message: format!("Attempted to load a non variable or pointer value"),
+            }),
+        }
+    }
+
+    /**
+     * Operations
+     */
+
+    pub fn create_neg(&self, value: &Value) -> Result<Value, CodeGenError> {
+        match value {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => {
+                let value = unsafe {
+                    LLVMBuildLoad2(
+                        self.builder,
+                        variable_type.get_type(),
+                        *llvm_value,
+                        NULL_STR,
+                    )
+                };
+                let value = unsafe { LLVMBuildNeg(self.builder, value, NULL_STR) };
+                Ok(Value::Literal {
+                    llvm_value: value,
+                    literal_type: variable_type.clone(),
+                })
+            }
+            _ => Err(CodeGenError {
+                message: format!("Unsupported value for negative"),
             }),
         }
     }
@@ -181,6 +202,29 @@ impl IRBuilder {
                     literal_type: variable_type.clone(),
                 })
             }
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type: ltype,
+                },
+                Value::Variable {
+                    llvm_value: rvalue,
+                    variable_type: rtype,
+                },
+            ) => {
+                let lvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
+                let rvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+
+                let llvm_value =
+                    unsafe { LLVMBuildBinOp(self.builder, op, lvalue, rvalue, NULL_STR) };
+
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: ltype.clone(),
+                })
+            }
             _ => Err(CodeGenError {
                 message: format!("Unsupported operands for binary expression"),
             }),
@@ -202,6 +246,7 @@ impl IRBuilder {
                     .iter()
                     .filter_map(|i| match i {
                         Value::Variable { llvm_value, .. } => Some(*llvm_value),
+                        Value::Literal { llvm_value, .. } => Some(*llvm_value),
                         _ => None,
                     })
                     .collect();
@@ -224,6 +269,30 @@ impl IRBuilder {
             _ => Err(CodeGenError {
                 message: format!("Trying to index non pointer like value"),
             }),
+        }
+    }
+
+    pub fn create_cbranch(
+        &self,
+        condition: &Value,
+        if_clause: LLVMBasicBlockRef,
+        else_clause: LLVMBasicBlockRef,
+    ) -> Result<Value, CodeGenError> {
+        match condition {
+            Value::Literal { llvm_value, .. } => {
+                let value =
+                    unsafe { LLVMBuildCondBr(self.builder, *llvm_value, if_clause, else_clause) };
+                Ok(Value::Instruction { llvm_value: value })
+            }
+            _ => Err(CodeGenError {
+                message: format!("Tryin to branch with bad condition"),
+            }),
+        }
+    }
+
+    pub fn create_ret_void(&self) -> Value {
+        Value::Instruction {
+            llvm_value: unsafe { LLVMBuildRetVoid(self.builder) },
         }
     }
 }
