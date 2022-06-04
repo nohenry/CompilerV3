@@ -1,6 +1,7 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Index};
 
 use crate::{default_range, OperatorKind, Range, Token, TokenKind};
+use colored::{ColoredString, Colorize};
 use dsl_util::cast;
 
 // pub struct VariableDecleration {
@@ -15,21 +16,54 @@ use dsl_util::cast;
 //     operator: Operator,
 //     right: Box<ParseNode>,
 // }
-#[derive(Debug, Clone, PartialEq)]
-pub enum Loop {
-    Infinite(/* Body */ Box<ParseNode>),
-    Until(
-        /* Condition */ Box<Expression>,
-        /* Body */ Box<ParseNode>,
-    ),
+pub trait AstIndexable: Display {
+    fn num_children(&self) -> usize;
+    fn child_at(&self, index: usize) -> &dyn AstIndexable;
+
+    fn write(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        index: u32,
+        indent: &String,
+        last: bool,
+    ) -> std::fmt::Result {
+        write!(f, "{}", indent)?;
+        if index != 0 {
+            write!(f, "{}", if last { "└──" } else { "├──" })?;
+        }
+        let nindent = format!(
+            "{}{}",
+            indent,
+            if index == 0 {
+                ""
+            } else if last {
+                "    "
+            } else {
+                "│   "
+            }
+        );
+        write!(f, "{}", self);
+
+        let n = self.num_children();
+        for i in 0..n {
+            self.child_at(0).write(
+                f,
+                i.try_into().unwrap(),
+                &nindent,
+                if i == n - 1 { true } else { false },
+            )?;
+        }
+        write!(f, "\n")
+    }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LoopExpression {
-    pub keyword: Range,
-    pub loop_type: Loop,
-    pub range: Range,
-}
+// impl Index<usize> for dyn AstIndexable {
+//     type Output = dyn AstIndexable;
+
+//     fn index(&self, index: usize) -> &Self::Output {
+//         self.child_at(index)
+//     }
+// }
 
 impl Loop {
     pub fn get_range(&self) -> Range {
@@ -48,11 +82,50 @@ pub struct BinaryExpression {
     pub range: Range,
 }
 
+impl Display for BinaryExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Binary Expression {}", self.operator)
+    }
+}
+
+impl AstIndexable for BinaryExpression {
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match index {
+            0 => &*self.left,
+            1 => &*self.right,
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpression {
     pub expression: Box<Expression>,
     pub operator: OperatorKind,
     pub range: Range,
+}
+
+impl Display for UnaryExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unary Expression {}", self.operator)
+    }
+}
+
+impl AstIndexable for UnaryExpression {
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match index {
+            0 => &*self.expression,
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +140,31 @@ pub struct IfExpression {
     pub range: Range,
 }
 
+impl Display for IfExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "If")
+    }
+}
+
+impl AstIndexable for IfExpression {
+    fn num_children(&self) -> usize {
+        if let Some(_) = self.else_clause {
+            3
+        } else {
+            2
+        }
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match index {
+            0 => &*self.condition,
+            // 1 => &*self.body,
+            // 2 => &*self.else_clause,
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionCall {
     pub expression_to_call: Box<Expression>,
@@ -75,11 +173,92 @@ pub struct FunctionCall {
     pub range: Range,
 }
 
+impl Display for FunctionCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Function Call")
+    }
+}
+
+impl AstIndexable for FunctionCall {
+    fn num_children(&self) -> usize {
+        1 + self.arguments.len()
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match index {
+            0 => &*self.expression_to_call,
+            _ => &self.arguments[index],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExpressionIndex {
+pub struct IndexExpression {
     pub index_expression: Box<Expression>,
     pub index_value: Box<Expression>,
     pub square_range: Range,
+}
+
+impl Display for IndexExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Index")
+    }
+}
+
+impl AstIndexable for IndexExpression {
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match index {
+            0 => &*self.index_expression,
+            1 => &*self.index_value,
+            _ => panic!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Loop {
+    Infinite(/* Body */ Box<ParseNode>),
+    Until(
+        /* Condition */ Box<Expression>,
+        /* Body */ Box<ParseNode>,
+    ),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopExpression {
+    pub keyword: Range,
+    pub loop_type: Loop,
+    pub range: Range,
+}
+
+impl Display for LoopExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.loop_type {
+            Loop::Infinite(_) => write!(f, "Unconditional Loop"),
+            Loop::Until(_, _) => write!(f, "Conditional Loop"),
+        }
+    }
+}
+
+impl AstIndexable for LoopExpression {
+    fn num_children(&self) -> usize {
+       match &self.loop_type {
+           Loop::Infinite(b) => 0,
+           Loop::Until(b, p) => 1,
+       } 
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match &self.loop_type {
+            Loop::Infinite(b) => panic!(),
+            Loop::Until(b, p) => &**b,
+        }
+        
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +269,7 @@ pub enum Expression {
     UnaryExpression(UnaryExpression),
     FunctionCall(FunctionCall),
     Lambda(FunctionSignature, Box<ParseNode>),
-    Index(ExpressionIndex),
+    Index(IndexExpression),
 
     IfExpression(IfExpression),
     LoopExpression(LoopExpression),
@@ -108,6 +287,51 @@ impl Expression {
             Expression::Index(t) => (t.index_expression.get_range().0, t.square_range.1),
             Expression::IfExpression(t) => (t.range),
             Expression::LoopExpression(t) => (t.range),
+        }
+    }
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expression::Identifier(i) => write!(f, "{}", cast!(&i.token_type, TokenKind::Ident)),
+            Expression::Literal(i) => write!(f, "Literal"),
+            Expression::BinaryExpression(b) => write!(f, "{}", b),
+            Expression::UnaryExpression(b) => write!(f, "{}", b),
+            Expression::FunctionCall(b) => write!(f, "{}", b),
+            Expression::Lambda(_, _) => write!(f, "Lambda"),
+            Expression::Index(b) => write!(f, "{}", b),
+            Expression::IfExpression(b) => write!(f, "{}", b),
+            Expression::LoopExpression(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl AstIndexable for Expression {
+    fn num_children(&self) -> usize {
+        match self {
+            Expression::Identifier(_) => 0,
+            Expression::Literal(l) => l.num_children(),
+            Expression::BinaryExpression(l) => l.num_children(),
+            Expression::UnaryExpression(l) => l.num_children(),
+            Expression::FunctionCall(l) => l.num_children(),
+            Expression::Lambda(_, _) => 0,
+            Expression::Index(l) => l.num_children(),
+            Expression::IfExpression(l) => l.num_children(),
+            Expression::LoopExpression(l) => l.num_children(),
+        }
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match self {
+            Expression::Literal(l) => l.child_at(index),
+            Expression::BinaryExpression(l) => l.child_at(index),
+            Expression::UnaryExpression(l) => l.child_at(index),
+            Expression::FunctionCall(l) => l.child_at(index),
+            Expression::Index(l) => l.child_at(index),
+            Expression::IfExpression(l) => l.child_at(index),
+            Expression::LoopExpression(l) => l.child_at(index),
+            _ => panic!(),
         }
     }
 }
@@ -195,6 +419,57 @@ impl Type {
             Type::FunctionType(t) => t.range,
             Type::ReferenceType(t) => t.range,
             Type::GenericType(t) => t.range,
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unit => f.write_str("()"),
+            Self::NamedType(t) => f.write_str(cast!(&t.token_type, TokenKind::Ident)),
+            Self::Int(t, _) => write!(f, "int{}", t),
+            Self::Uint(t, _) => write!(f, "uint{}", t),
+            Self::Bool(_) => write!(f, "bool"),
+            Self::Float(s, _) => write!(f, "float{}", s),
+            Self::Char(_) => write!(f, "char"),
+            Self::ArrayType(ArrayType {
+                base_type, size, ..
+            }) => {
+                if let Some((_, t)) = size {
+                    write!(f, "[{}: {}]", base_type, t)
+                } else {
+                    write!(f, "[{}]", base_type)
+                }
+            }
+            Self::FunctionType(FunctionType {
+                parameters,
+                return_type,
+                ..
+            }) => {
+                write!(f, "(")?;
+                write!(f, ")")?;
+                if let Type::Unit = **return_type {
+                    write!(f, " =>")
+                } else {
+                    write!(f, ":{} =>", return_type)
+                }
+            }
+            Self::ReferenceType(ReferenceType { base_type, .. }) => {
+                write!(f, "&{}", base_type)
+            }
+            Self::GenericType(GenericType {
+                arguments,
+                base_type,
+                ..
+            }) => {
+                write!(f, "{}<", base_type)?;
+                write!(f, "{}", arguments[0])?;
+                for t in &arguments[1..] {
+                    write!(f, ", {}", t)?;
+                }
+                write!(f, ">")
+            }
         }
     }
 }
@@ -427,11 +702,86 @@ pub struct ArrayInitializer {
     pub range: Range,
 }
 
+impl Display for ArrayInitializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Array")
+    }
+}
+
+impl AstIndexable for ArrayInitializer {
+    fn num_children(&self) -> usize {
+        self.elements.len()
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        &self.elements[index]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateInitializer {
     pub named_type: Option<Box<Type>>,
     pub initializer_values: Vec<(String, Option<Expression>)>,
     pub range: Range,
+}
+
+impl Display for TemplateInitializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Template Initializer")
+    }
+}
+
+impl AstIndexable for TemplateInitializer {
+    fn num_children(&self) -> usize {
+        if let Some(ty) = &self.named_type {
+            self.initializer_values.len() + 2
+        } else {
+            self.initializer_values.len()
+        }
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        self.initializer_values[index].1.as_ref().unwrap()
+        // &Grouper("Pod".to_string())
+        // if let Some(ty) = self.named_type {
+
+        //     self.initializer_values.len() + 2
+        // } else {
+        //     self.initializer_values.len()
+        // }
+    }
+}
+
+impl TemplateInitializer {
+    fn write(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        index: u32,
+        indent: &String,
+        last: bool,
+    ) -> std::fmt::Result {
+        write!(f, "{}", indent)?;
+        if index != 0 {
+            write!(f, "{}", if last { "└──" } else { "├──" })?;
+        }
+        let nindent = format!(
+            "{}{}",
+            indent,
+            if index == 0 {
+                ""
+            } else if last {
+                "    "
+            } else {
+                "│   "
+            }
+        );
+        if let Some(ty) = &self.named_type {
+            write!(f, "Template {}", ty)?;
+        } else {
+            write!(f, "Template ")?;
+        }
+        write!(f, "\n")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -458,5 +808,100 @@ impl Literal {
             Literal::String(_, r) => r.clone(),
             Literal::Empty => default_range(),
         }
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Integer(i, _, _) => write!(f, "Integer {}", i),
+            Literal::Float(b, _) => write!(f, "Float {}", b),
+            Literal::Boolean(b, _) => write!(f, "Boolean {}", b),
+            Literal::Array(b) => write!(f, "{}", b),
+            Literal::StructInitializer(b) => write!(f, "{}", b),
+            Literal::String(b, _) => write!(f, "String \"{}\"", b),
+            Literal::Empty => write!(f, "Empty"),
+        }
+    }
+}
+
+impl AstIndexable for Literal {
+    fn num_children(&self) -> usize {
+        match self {
+            Literal::Array(b) => b.num_children(),
+            Literal::StructInitializer(b) => b.num_children(),
+            _ => 0,
+        }
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        match self {
+            Literal::Array(b) => b.child_at(index),
+            Literal::StructInitializer(b) => b.child_at(index),
+            _ => panic!(),
+        }
+    }
+}
+
+impl Literal {
+    fn write(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        index: u32,
+        indent: &String,
+        last: bool,
+    ) -> std::fmt::Result {
+        write!(f, "{}", indent)?;
+        if index != 0 {
+            write!(f, "{}", if last { "└──" } else { "├──" })?;
+        }
+        let nindent = format!(
+            "{}{}",
+            indent,
+            if index == 0 {
+                ""
+            } else if last {
+                "    "
+            } else {
+                "│   "
+            }
+        );
+        let res = match self {
+            Literal::Empty => f.write_str("Empty"),
+            Literal::Float(val, _) => {
+                f.write_str(&ColoredString::from(format!("{}", val).as_str()).yellow())
+            }
+            Literal::Boolean(val, _) => {
+                f.write_str(&ColoredString::from(format!("{}", val).as_str()).blue())
+            }
+            Literal::Integer(val, _, _) => {
+                f.write_str(&ColoredString::from(format!("{}", val).as_str()).yellow())
+            }
+            Literal::Array(ArrayInitializer { elements, .. }) => {
+                f.write_fmt(format_args!("{:?}", elements))
+            }
+            Literal::StructInitializer(i) => i.write(f, index + 1, &nindent, true),
+            Literal::String(i, _) => write!(f, "\"{}\"", i),
+        };
+        write!(f, "\n")?;
+        res
+    }
+}
+
+struct Grouper(String);
+
+impl Display for Grouper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AstIndexable for Grouper {
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+        panic!()
     }
 }

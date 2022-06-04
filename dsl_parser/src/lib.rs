@@ -2,13 +2,15 @@
 use std::collections::{linked_list::Cursor, LinkedList};
 
 use dsl_lexer::ast::{
-    ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, ExpressionIndex,
+    ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, IndexExpression,
     FunctionCall, FunctionDecleration, FunctionSignature, FunctionType, GenericParameters,
     GenericType, IfExpression, ImportDecleration, Literal, Loop, LoopExpression, ParseNode,
     ReferenceType, SpecBody, SpecDecleration, TemplateDecleration, TemplateInitializer, Type,
     TypeDecleration, TypeSymbol, UnaryExpression, VariableDecleration,
 };
-use dsl_lexer::{default_range, Keyword, KeywordKind, Operator, OperatorKind, Token, TokenKind};
+use dsl_lexer::{
+    default_range, Keyword, KeywordKind, Operator, OperatorKind, Range, Token, TokenKind,
+};
 
 use dsl_errors::ParseError;
 
@@ -483,12 +485,19 @@ fn parse_function_type(
     }
 
     let cp = expect(tokens, TokenKind::CloseParen)?;
-    let _arrow = expect(tokens, Operator::create_expect(OperatorKind::Arrow))?;
 
-    let ret_type = match parse_type(tokens) {
-        Ok(t) => t,
-        Err(_) => Type::Unit,
+    let ret_type = if let Some(Token {
+        token_type: TokenKind::Colon,
+        ..
+    }) = tokens.current()
+    {
+        tokens.move_next();
+        parse_type(tokens)?
+    } else {
+        Type::Unit
     };
+
+    let _arrow = expect(tokens, Operator::create_expect(OperatorKind::Arrow))?;
 
     let end = ret_type.get_range().1;
     Ok(FunctionSignature {
@@ -597,7 +606,7 @@ fn parse_operator_expression(
                         let ob = expect(tokens, TokenKind::OpenBracket)?;
                         let value = parse_expression(tokens, 0)?;
                         let cb = expect(tokens, TokenKind::CloseBracket)?;
-                        let idx = ExpressionIndex {
+                        let idx = IndexExpression {
                             index_expression: Box::new(lleft),
                             index_value: Box::new(value),
                             square_range: (ob.range.0, cb.range.1),
@@ -647,11 +656,95 @@ fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expres
                             ..
                         }),
                     ..
-                }) = tokens.peek_next()
+                }) = tokens.current()
                 {
-                    let tok = tokens.current().unwrap();
-                    tokens.move_next();
-                    Some((tok.range, Box::new(parse_block_statement(tokens)?)))
+                    let mut clauses = vec![];
+                    while let (
+                        Some(Token {
+                            token_type:
+                                TokenKind::Keyword(Keyword {
+                                    keyword: KeywordKind::Else,
+                                    ..
+                                }),
+                            range: erange,
+                        }),
+                        Some(Token {
+                            token_type:
+                                TokenKind::Keyword(Keyword {
+                                    keyword: KeywordKind::If,
+                                    ..
+                                }),
+                            range: irange,
+                        }),
+                    ) = (tokens.current(), tokens.peek_next())
+                    {
+                        tokens.move_next();
+                        tokens.move_next();
+
+                        let condition = parse_expression(tokens, 0)?;
+                        let body = parse_block_statement(tokens)?;
+                        // let expr = ParseNode::Expression(
+                        //     Expression::IfExpression(),
+                        //     (erange.0, body.get_range().1),
+                        // );
+                        let end = body.get_range().1;
+                        clauses.push(IfExpression {
+                            if_token: (erange.0, irange.1),
+                            condition: Box::new(condition),
+                            body: Box::new(body),
+                            else_clause: None,
+                            range: (erange.0, end),
+                        });
+                    }
+
+                    let else_clause = if let Some(Token {
+                        token_type:
+                            TokenKind::Keyword(Keyword {
+                                keyword: KeywordKind::Else,
+                                ..
+                            }),
+                        ..
+                    }) = tokens.current()
+                    {
+                        let tok = tokens.current().unwrap();
+                        tokens.move_next();
+                        Some((tok.range, parse_block_statement(tokens)?))
+                    } else {
+                        None
+                    };
+
+                    fn collect(
+                        arr: &[IfExpression],
+                        else_clause: Option<(Range, ParseNode)>,
+                    ) -> ParseNode {
+                        if arr.len() == 0 {
+                            if let Some((_, body)) = else_clause {
+                                return body;
+                            } else {
+                                return ParseNode::None;
+                            }
+                        } else if arr.len() == 1 {
+                            if else_clause.is_none() {
+                                return ParseNode::Expression(
+                                    Expression::IfExpression(arr[0].clone()),
+                                    arr[0].range,
+                                );
+                            }
+                        }
+                        let pp = collect(&arr[..arr.len() - 1], else_clause);
+                        let ifexpr = arr.last().unwrap().clone();
+                        let ifexpr = IfExpression {
+                            else_clause: Some((pp.get_range(), Box::new(pp))),
+                            ..ifexpr
+                        };
+                        let range = ifexpr.range;
+
+                        return ParseNode::Expression(Expression::IfExpression(ifexpr), range);
+                    }
+
+                    let ec = collect(&clauses[..], else_clause);
+                    let range = ec.get_range();
+                    Some((range, Box::new(ec)))
                 } else {
                     None
                 };

@@ -13,7 +13,7 @@ use llvm_sys::{
 use dsl_lexer::ast::ParseNode;
 
 use dsl_errors::CodeGenError;
-use dsl_symbol::{Symbol, SymbolValue};
+use dsl_symbol::{Symbol, SymbolValue, Value};
 
 pub struct Module {
     // pub(super) name: String,
@@ -21,6 +21,7 @@ pub struct Module {
     pub(super) module: LLVMModuleRef,
     pub(super) current_block: Rc<RefCell<LLVMBasicBlockRef>>,
     pub(super) current_function: Rc<RefCell<LLVMValueRef>>,
+    pub(super) jump_point: Rc<RefCell<Value>>,
     pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
     pub(super) symbol_root: Rc<RefCell<Symbol>>,
@@ -51,6 +52,7 @@ impl Module {
             module,
             current_block: Rc::new(RefCell::new(std::ptr::null_mut())),
             current_function: Rc::new(RefCell::new(std::ptr::null_mut())),
+            jump_point: Rc::new(RefCell::new(Value::Empty)),
             builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,

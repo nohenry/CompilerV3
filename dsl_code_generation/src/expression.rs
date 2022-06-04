@@ -1,14 +1,16 @@
+use std::ffi::{CStr, CString};
+
 use dsl_errors::go;
-use llvm_sys::LLVMOpcode;
+use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
-    BinaryExpression, Expression, ExpressionIndex, IfExpression, UnaryExpression,
+    BinaryExpression, Expression, IndexExpression, IfExpression, UnaryExpression,
 };
 use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::{cast, NULL_STR};
+use dsl_util::{c_str, cast, NULL_STR};
 use llvm_sys::core::{
-    LLVMAppendBasicBlock, LLVMBuildBr, LLVMBuildCondBr, LLVMCreateBasicBlockInContext,
-    LLVMGetGlobalContext, LLVMGetLastInstruction, LLVMPositionBuilder, LLVMPositionBuilderAtEnd,
+    LLVMAppendBasicBlock, LLVMAppendExistingBasicBlock, LLVMCreateBasicBlockInContext,
+    LLVMGetGlobalContext, LLVMGetMDKindID, LLVMMDString, LLVMSetMetadata,
 };
 
 use super::module::Module;
@@ -57,8 +59,51 @@ impl Module {
                             BitLeftEqual => LLVMOpcode::LLVMShl,
                             BitRightEqual => LLVMOpcode::LLVMAShr,
                             _ => {
-                                self.add_error(format!("Unsupported binary operation {:?}", c));
-                                return Value::Empty;
+                                let left = self.gen_expression(left);
+                                let right = self.gen_expression(right);
+                                match left.get_type() {
+                                    Type::Integer { .. } | Type::Boolean { .. } => {
+                                        let func = match c {
+                                            Eq => LLVMIntPredicate::LLVMIntEQ,
+                                            _ => {
+                                                self.add_error(format!(
+                                                    "Unsupported binary operation {:?}",
+                                                    c
+                                                ));
+                                                return Value::Empty;
+                                            }
+                                        };
+                                        return go!(
+                                            self,
+                                            self.builder.create_icompare(&left, &right, func),
+                                            Value
+                                        );
+                                    }
+                                    Type::Float { .. } => {
+                                        let func = match c {
+                                            Eq => LLVMRealPredicate::LLVMRealOEQ,
+                                            _ => {
+                                                self.add_error(format!(
+                                                    "Unsupported binary operation {:?}",
+                                                    c
+                                                ));
+                                                return Value::Empty;
+                                            }
+                                        };
+                                        return go!(
+                                            self,
+                                            self.builder.create_fcompare(&left, &right, func),
+                                            Value
+                                        );
+                                    }
+                                    _ => {
+                                        self.add_error(format!(
+                                            "Unsupported binary operation {:?}",
+                                            c
+                                        ));
+                                        return Value::Empty;
+                                    }
+                                }
                             }
                         };
 
@@ -127,7 +172,7 @@ impl Module {
                     Value::Empty
                 }
             },
-            Expression::Index(ExpressionIndex {
+            Expression::Index(IndexExpression {
                 index_expression,
                 index_value,
                 ..
@@ -185,18 +230,28 @@ impl Module {
 
                 if let Some((_, ec)) = else_clause {
                     let else_body = unsafe {
-                        LLVMAppendBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            NULL_STR,
-                        )
+                        LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR)
+                        // LLVMAppendBasicBlock(
+                        //     self.current_function.borrow().as_mut().unwrap(),
+                        //     NULL_STR,
+                        // )
                     };
 
-                    let end = unsafe {
-                        LLVMAppendBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            NULL_STR,
-                        )
+                    let (end, empty) = match *self.jump_point.borrow() {
+                        Value::Empty => unsafe {
+                            let end =
+                                LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR);
+                            (end, true)
+                        },
+                        Value::Block { llvm_value } => (llvm_value, false),
+                        _ => {
+                            self.add_error("Unable to get basic block".into());
+                            return Value::Empty;
+                        }
                     };
+                    if empty {
+                        self.jump_point.replace(Value::Block { llvm_value: end });
+                    }
 
                     go!(
                         self,
@@ -204,22 +259,64 @@ impl Module {
                         Value
                     );
 
-                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), if_body) }
+                    self.builder.set_position_end(if_body);
                     self.gen_parse_node(&body);
-                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
 
-                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), else_body) }
-                    self.gen_parse_node(&ec);
-                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
+                    go!(self, self.builder.create_branch(end), Value);
 
-                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), end) }
-                } else {
-                    let end = unsafe {
-                        LLVMAppendBasicBlock(
+                    unsafe {
+                        LLVMAppendExistingBasicBlock(
                             self.current_function.borrow().as_mut().unwrap(),
-                            NULL_STR,
-                        )
+                            else_body,
+                        );
+                    }
+
+                    self.builder.set_position_end(else_body);
+                    self.gen_parse_node(&ec);
+                    let brn = go!(self, self.builder.create_branch(end), Value);
+                    match brn {
+                        Value::Instruction { llvm_value } => unsafe {
+                            let strds = LLVMMDString(
+                                CString::new("Hello".to_string()).unwrap().as_ptr(),
+                                5,
+                            );
+                            LLVMSetMetadata(llvm_value, LLVMGetMDKindID(c_str!("Potato"), 6), strds)
+                        },
+                        _ => (),
+                    }
+
+                    if empty {
+                        unsafe {
+                            LLVMAppendExistingBasicBlock(
+                                self.current_function.borrow().as_mut().unwrap(),
+                                end,
+                            );
+                        }
+                    }
+                    self.builder.set_position_end(end);
+
+                    if empty {
+                        self.jump_point.replace(Value::Empty);
+                    }
+                } else {
+                    // TODO: remove ffi function
+                    let (end, empty) = match *self.jump_point.borrow() {
+                        Value::Empty => unsafe {
+                            let end = LLVMAppendBasicBlock(
+                                self.current_function.borrow().as_mut().unwrap(),
+                                NULL_STR,
+                            );
+                            (end, true)
+                        },
+                        Value::Block { llvm_value } => (llvm_value, false),
+                        _ => {
+                            self.add_error("Unable to get basic block".into());
+                            return Value::Empty;
+                        }
                     };
+                    if empty {
+                        self.jump_point.replace(Value::Block { llvm_value: end });
+                    }
 
                     go!(
                         self,
@@ -227,11 +324,14 @@ impl Module {
                         Value
                     );
 
-                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), if_body) }
+                    self.builder.set_position_end(if_body);
                     self.gen_parse_node(&body);
-                    unsafe { LLVMBuildBr(self.builder.get_builder(), end) };
+                    go!(self, self.builder.create_branch(end), Value);
 
-                    unsafe { LLVMPositionBuilderAtEnd(self.builder.get_builder(), end) }
+                    self.builder.set_position_end(end);
+                    if empty {
+                        self.jump_point.replace(Value::Empty);
+                    }
                 }
 
                 Value::Empty

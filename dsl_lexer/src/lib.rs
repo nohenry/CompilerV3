@@ -1,4 +1,4 @@
-use std::str::Chars;
+use std::{fmt::Display, str::Chars};
 
 use dsl_macros::*;
 
@@ -130,6 +130,12 @@ pub enum OperatorKind {
     BitRight,
     BitRightEqual,
     Spread,
+}
+
+impl Display for OperatorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

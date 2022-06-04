@@ -110,6 +110,7 @@ version = "0.1.0"
 name = "dsl_lexer"
 version = "0.1.0"
 dependencies = [
+ "colored",
  "dsl_errors",
  "dsl_macros",
  "dsl_trie",

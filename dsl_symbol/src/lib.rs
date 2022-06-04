@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use llvm_sys::{
     core::LLVMVoidType,
-    prelude::{LLVMTypeRef, LLVMValueRef},
+    prelude::{LLVMTypeRef, LLVMValueRef, LLVMBasicBlockRef},
 };
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,9 @@ pub enum Value {
     Instruction {
         llvm_value: LLVMValueRef,
     },
+    Block {
+        llvm_value: LLVMBasicBlockRef,
+    },
     Load {
         llvm_value: LLVMValueRef,
         load_type: Type,
@@ -31,7 +34,7 @@ impl Value {
             Self::Literal { literal_type, .. } => literal_type,
             Self::Variable { variable_type, .. } => variable_type,
             Self::Load { load_type, .. } => load_type,
-            Self::Empty | Self::Instruction { .. } => panic!("Called on unkown value!"),
+            Self::Empty | Self::Instruction {..} | Self::Block { .. } => panic!("Called on unkown value!"),
         }
     }
 

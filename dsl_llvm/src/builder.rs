@@ -3,12 +3,13 @@ use dsl_errors::CodeGenError;
 use dsl_util::NULL_STR;
 use llvm_sys::{
     core::{
-        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildCondBr, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
-        LLVMBuildNeg, LLVMBuildRetVoid, LLVMBuildStore, LLVMConstInt, LLVMConstReal, LLVMInt64Type,
-        LLVMPointerType, LLVMPositionBuilder, LLVMPositionBuilderAtEnd,
+        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp,
+        LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg, LLVMBuildRetVoid, LLVMBuildStore,
+        LLVMConstInt, LLVMConstReal, LLVMInt64Type, LLVMPointerType, LLVMPositionBuilder,
+        LLVMPositionBuilderAtEnd, LLVMBuildBr, LLVMAppendBasicBlock,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMValueRef},
-    LLVMOpcode,
+    LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate,
 };
 
 use dsl_symbol::{Type, Value};
@@ -231,6 +232,132 @@ impl IRBuilder {
         }
     }
 
+    pub fn create_icompare(
+        &self,
+        left: &Value,
+        right: &Value,
+        op: LLVMIntPredicate,
+    ) -> Result<Value, CodeGenError> {
+        match (left, right) {
+            (
+                Value::Literal {
+                    llvm_value: lvalue,
+                    literal_type,
+                },
+                Value::Literal {
+                    llvm_value: rvalue, ..
+                },
+            ) => {
+                let llvm_value =
+                    unsafe { LLVMBuildICmp(self.builder, op, *lvalue, *rvalue, NULL_STR) };
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: literal_type.clone(),
+                })
+            }
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type,
+                },
+                Value::Literal {
+                    llvm_value: rvalue, ..
+                },
+            ) => {
+                let lvalue = unsafe {
+                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *lvalue, NULL_STR)
+                };
+                let llvm_value =
+                    unsafe { LLVMBuildICmp(self.builder, op, lvalue, *rvalue, NULL_STR) };
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: variable_type.clone(),
+                })
+            }
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type: ltype,
+                },
+                Value::Variable {
+                    llvm_value: rvalue,
+                    variable_type: rtype,
+                },
+            ) => {
+                let lvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
+                let rvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+
+                let llvm_value =
+                    unsafe { LLVMBuildICmp(self.builder, op, lvalue, rvalue, NULL_STR) };
+
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: ltype.clone(),
+                })
+            }
+            _ => Err(CodeGenError {
+                message: format!("Unsupported operands for binary expression"),
+            }),
+        }
+    }
+
+    pub fn create_fcompare(
+        &self,
+        left: &Value,
+        right: &Value,
+        op: LLVMRealPredicate,
+    ) -> Result<Value, CodeGenError> {
+        match (left, right) {
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type,
+                },
+                Value::Literal {
+                    llvm_value: rvalue, ..
+                },
+            ) => {
+                let lvalue = unsafe {
+                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *lvalue, NULL_STR)
+                };
+                let llvm_value =
+                    unsafe { LLVMBuildFCmp(self.builder, op, lvalue, *rvalue, NULL_STR) };
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: variable_type.clone(),
+                })
+            }
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type: ltype,
+                },
+                Value::Variable {
+                    llvm_value: rvalue,
+                    variable_type: rtype,
+                },
+            ) => {
+                let lvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
+                let rvalue =
+                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+
+                let llvm_value =
+                    unsafe { LLVMBuildFCmp(self.builder, op, lvalue, rvalue, NULL_STR) };
+
+                Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: ltype.clone(),
+                })
+            }
+            _ => Err(CodeGenError {
+                message: format!("Unsupported operands for binary expression"),
+            }),
+        }
+    }
+
     pub fn create_gep_inbound(
         &self,
         ptr: &Value,
@@ -288,6 +415,18 @@ impl IRBuilder {
                 message: format!("Tryin to branch with bad condition"),
             }),
         }
+    }
+
+    pub fn create_branch(&self, branch: LLVMBasicBlockRef) -> Result<Value, CodeGenError> {
+        let value = unsafe { LLVMBuildBr(self.builder, branch) };
+        Ok(Value::Instruction { llvm_value: value })
+    }
+
+    pub fn append_block(&self) -> Result<Value, CodeGenError> {
+        unsafe {
+            // LLVMAppendBasicBlock(Fn, Name)
+        }
+        Ok(Value::Empty)
     }
 
     pub fn create_ret_void(&self) -> Value {

@@ -1,7 +1,17 @@
 
-int main(int argc) {
+int main(int argc)
+{
     int d = 5;
-    if (argc == 3) {
-        d += 1;
+    if (d == 5)
+    {
+        d = 6;
+    }
+    else if (d == 4)
+    {
+        d = 0;
+    }
+    else
+    {
+        d = 7;
     }
 }

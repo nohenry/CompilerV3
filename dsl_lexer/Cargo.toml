@@ -11,3 +11,4 @@ dsl_macros = {path="../dsl_macros"}
 dsl_trie = {path="../dsl_trie"}
 dsl_errors = {path="../dsl_errors"}
 lazy_static = "1.4.0"
+colored = "2"

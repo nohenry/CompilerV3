@@ -9,7 +9,7 @@ use llvm_sys::core::{
 
 use dsl_lexer::ast::{FunctionDecleration, ParseNode, VariableDecleration};
 use dsl_lexer::TokenKind;
-use dsl_util::{c_str, cast, NULL_STR};
+use dsl_util::{c_str, cast};
 
 use super::module::Module;
 use dsl_symbol::{SymbolValue, Type, Value};
