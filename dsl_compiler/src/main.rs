@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
 };
 
+use dsl_lexer::ast::AstIndexable;
 use dsl_symbol::Symbol;
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
@@ -149,7 +150,7 @@ fn main() {
     }
 
     let ast = dsl_parser::parse_from_tokens(&ltokens).unwrap();
-    println!("AST {}", ast);
+    println!("{}", ast.format());
 
     let name = CString::new(path.to_str().unwrap()).expect("Unable to create model name");
 

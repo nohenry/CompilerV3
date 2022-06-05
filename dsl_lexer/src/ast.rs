@@ -1,24 +1,28 @@
-use std::{fmt::Display, ops::Index};
+use std::fmt::{self, Display};
 
 use crate::{default_range, OperatorKind, Range, Token, TokenKind};
 use colored::{ColoredString, Colorize};
 use dsl_util::cast;
 
-// pub struct VariableDecleration {
-//     identifier: String,
-//     variable_type: Option<Box<ParseNode>>,
-//     initializer: Option<Box<ParseNode>>,
-// }
+pub struct Fmt<F>(pub F)
+where
+    F: Fn(&mut fmt::Formatter) -> fmt::Result;
 
-// #[derive(Debug)]
-// pub struct BinaryExpression {
-//     left: Box<ParseNode>,
-//     operator: Operator,
-//     right: Box<ParseNode>,
-// }
+impl<F> fmt::Display for Fmt<F>
+where
+    F: Fn(&mut fmt::Formatter) -> fmt::Result,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
 pub trait AstIndexable: Display {
     fn num_children(&self) -> usize;
-    fn child_at(&self, index: usize) -> &dyn AstIndexable;
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable>;
+    fn child_at_bx<'a>(&'a self, _index: usize) -> Box<dyn AstIndexable + 'a> {
+        panic!("This type doesn't used box values!")
+    }
 
     fn write(
         &self,
@@ -42,28 +46,36 @@ pub trait AstIndexable: Display {
                 "│   "
             }
         );
-        write!(f, "{}", self);
+        write!(f, "{}\n", self)?;
 
         let n = self.num_children();
         for i in 0..n {
-            self.child_at(0).write(
-                f,
-                i.try_into().unwrap(),
-                &nindent,
-                if i == n - 1 { true } else { false },
-            )?;
+            let child = self.child_at(i);
+            if let Some(child) = child {
+                child.write(
+                    f,
+                    (i + 1).try_into().unwrap(),
+                    &nindent,
+                    if i == n - 1 { true } else { false },
+                )?;
+            } else {
+                let child = self.child_at_bx(i);
+                child.write(
+                    f,
+                    (i + 1).try_into().unwrap(),
+                    &nindent,
+                    if i == n - 1 { true } else { false },
+                )?;
+            }
         }
-        write!(f, "\n")
+
+        write!(f, "")
+    }
+
+    fn format(&self) -> String {
+        format!("{}", Fmt(|f| self.write(f, 0, &String::from(""), false)))
     }
 }
-
-// impl Index<usize> for dyn AstIndexable {
-//     type Output = dyn AstIndexable;
-
-//     fn index(&self, index: usize) -> &Self::Output {
-//         self.child_at(index)
-//     }
-// }
 
 impl Loop {
     pub fn get_range(&self) -> Range {
@@ -84,7 +96,12 @@ pub struct BinaryExpression {
 
 impl Display for BinaryExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Binary Expression {}", self.operator)
+        write!(
+            f,
+            "{} {}",
+            ColoredString::from("Binary Expression").cyan(),
+            self.operator
+        )
     }
 }
 
@@ -93,12 +110,12 @@ impl AstIndexable for BinaryExpression {
         2
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match index {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match index {
             0 => &*self.left,
             1 => &*self.right,
             _ => panic!(),
-        }
+        })
     }
 }
 
@@ -111,7 +128,12 @@ pub struct UnaryExpression {
 
 impl Display for UnaryExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Unary Expression {}", self.operator)
+        write!(
+            f,
+            "{} {}",
+            ColoredString::from("Unary Expression").cyan(),
+            self.operator
+        )
     }
 }
 
@@ -120,11 +142,11 @@ impl AstIndexable for UnaryExpression {
         1
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match index {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match index {
             0 => &*self.expression,
             _ => panic!(),
-        }
+        })
     }
 }
 
@@ -142,7 +164,7 @@ pub struct IfExpression {
 
 impl Display for IfExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "If")
+        write!(f, "{}", ColoredString::from("If").cyan())
     }
 }
 
@@ -155,13 +177,13 @@ impl AstIndexable for IfExpression {
         }
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match index {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match index {
             0 => &*self.condition,
-            // 1 => &*self.body,
-            // 2 => &*self.else_clause,
+            1 => &*self.body,
+            2 => &*self.else_clause.as_ref().unwrap().1,
             _ => panic!(),
-        }
+        })
     }
 }
 
@@ -175,7 +197,7 @@ pub struct FunctionCall {
 
 impl Display for FunctionCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Function Call")
+        write!(f, "{}", ColoredString::from("Function Call").cyan())
     }
 }
 
@@ -184,11 +206,11 @@ impl AstIndexable for FunctionCall {
         1 + self.arguments.len()
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match index {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match index {
             0 => &*self.expression_to_call,
             _ => &self.arguments[index],
-        }
+        })
     }
 }
 
@@ -201,7 +223,7 @@ pub struct IndexExpression {
 
 impl Display for IndexExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Index")
+        write!(f, "{}", ColoredString::from("Index").cyan())
     }
 }
 
@@ -210,12 +232,12 @@ impl AstIndexable for IndexExpression {
         2
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match index {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match index {
             0 => &*self.index_expression,
             1 => &*self.index_value,
             _ => panic!(),
-        }
+        })
     }
 }
 
@@ -238,26 +260,29 @@ pub struct LoopExpression {
 impl Display for LoopExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.loop_type {
-            Loop::Infinite(_) => write!(f, "Unconditional Loop"),
-            Loop::Until(_, _) => write!(f, "Conditional Loop"),
+            Loop::Infinite(_) => write!(f, "{}", ColoredString::from("Unconditional Loop").cyan()),
+            Loop::Until(_, _) => write!(f, "{}", ColoredString::from("Conditional Loop").cyan()),
         }
     }
 }
 
 impl AstIndexable for LoopExpression {
     fn num_children(&self) -> usize {
-       match &self.loop_type {
-           Loop::Infinite(b) => 0,
-           Loop::Until(b, p) => 1,
-       } 
+        match &self.loop_type {
+            Loop::Infinite(_) => 0,
+            Loop::Until(_, _) => 1,
+        }
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        match &self.loop_type {
-            Loop::Infinite(b) => panic!(),
-            Loop::Until(b, p) => &**b,
-        }
-        
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(match &self.loop_type {
+            Loop::Infinite(b) => &**b,
+            Loop::Until(b, p) => match index {
+                0 => &**b,
+                1 => &**p,
+                _ => panic!(),
+            },
+        })
     }
 }
 
@@ -283,7 +308,7 @@ impl Expression {
             Expression::BinaryExpression(t) => t.range,
             Expression::UnaryExpression(t) => t.range,
             Expression::FunctionCall(t) => t.range,
-            Expression::Lambda(t, b) => t.range,
+            Expression::Lambda(t, _) => t.range,
             Expression::Index(t) => (t.index_expression.get_range().0, t.square_range.1),
             Expression::IfExpression(t) => (t.range),
             Expression::LoopExpression(t) => (t.range),
@@ -295,11 +320,11 @@ impl Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expression::Identifier(i) => write!(f, "{}", cast!(&i.token_type, TokenKind::Ident)),
-            Expression::Literal(i) => write!(f, "Literal"),
+            Expression::Literal(i) => write!(f, "{}", i),
             Expression::BinaryExpression(b) => write!(f, "{}", b),
             Expression::UnaryExpression(b) => write!(f, "{}", b),
             Expression::FunctionCall(b) => write!(f, "{}", b),
-            Expression::Lambda(_, _) => write!(f, "Lambda"),
+            Expression::Lambda(_, _) => write!(f, "{}", ColoredString::from("Lambda").cyan()),
             Expression::Index(b) => write!(f, "{}", b),
             Expression::IfExpression(b) => write!(f, "{}", b),
             Expression::LoopExpression(b) => write!(f, "{}", b),
@@ -322,7 +347,7 @@ impl AstIndexable for Expression {
         }
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
         match self {
             Expression::Literal(l) => l.child_at(index),
             Expression::BinaryExpression(l) => l.child_at(index),
@@ -331,6 +356,19 @@ impl AstIndexable for Expression {
             Expression::Index(l) => l.child_at(index),
             Expression::IfExpression(l) => l.child_at(index),
             Expression::LoopExpression(l) => l.child_at(index),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+        match self {
+            Expression::Literal(l) => l.child_at_bx(index),
+            Expression::BinaryExpression(l) => l.child_at_bx(index),
+            Expression::UnaryExpression(l) => l.child_at_bx(index),
+            Expression::FunctionCall(l) => l.child_at_bx(index),
+            Expression::Index(l) => l.child_at_bx(index),
+            Expression::IfExpression(l) => l.child_at_bx(index),
+            Expression::LoopExpression(l) => l.child_at_bx(index),
             _ => panic!(),
         }
     }
@@ -361,12 +399,94 @@ pub struct FunctionSignature {
     pub range: Range,
 }
 
+impl Display for FunctionSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", ColoredString::from("Function Signature").cyan())
+    }
+}
+
+impl AstIndexable for FunctionSignature {
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => None,
+            1 => Some(&*self.return_type),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+        match index {
+            0 => Box::new(CreateParentBx(
+                ColoredString::from("Parameters").green().to_string(),
+                self.parameters
+                    .iter()
+                    .map(
+                        |TypeSymbol {
+                             symbol_type,
+                             symbol,
+                         }| {
+                            let grp = Grouper(format!(
+                                "{}: {}",
+                                cast!(&symbol.token_type, TokenKind::Ident),
+                                symbol_type
+                            ));
+                            let b: Box<dyn AstIndexable> = Box::new(grp);
+                            b
+                        },
+                    )
+                    .collect(),
+            )),
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionType {
     pub parameters: Vec<Type>,
     pub return_type: Box<Type>,
     pub parens: Range,
     pub range: Range,
+}
+
+impl Display for FunctionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", ColoredString::from("Function Type").cyan())
+    }
+}
+
+impl AstIndexable for FunctionType {
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => None,
+            1 => Some(&*self.return_type),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+        match index {
+            0 => Box::new(CreateParent(
+                ColoredString::from("Parameters").green().to_string(),
+                self.parameters
+                    .iter()
+                    .map(|f| {
+                        let b: &dyn AstIndexable = f;
+                        b
+                    })
+                    .collect(),
+            )),
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -448,6 +568,12 @@ impl Display for Type {
                 ..
             }) => {
                 write!(f, "(")?;
+                if parameters.len() >= 1 {
+                    write!(f, "{}", parameters[0])?;
+                    for t in &parameters[1..] {
+                        write!(f, ", {}", t)?;
+                    }
+                }
                 write!(f, ")")?;
                 if let Type::Unit = **return_type {
                     write!(f, " =>")
@@ -474,10 +600,34 @@ impl Display for Type {
     }
 }
 
+impl AstIndexable for Type {
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+        panic!()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Punctuation {
     Comma,
     FunctionArrow,
+}
+
+impl Display for Punctuation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} `{}`",
+            ColoredString::from("Punctuation").cyan(),
+            match self {
+                Self::Comma => ",",
+                Self::FunctionArrow => "=>",
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -491,6 +641,50 @@ pub struct VariableDecleration {
     pub range: Range,
 }
 
+impl Display for VariableDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} `{}`",
+            ColoredString::from("Variable Decleration").cyan(),
+            cast!(&self.identifier.token_type, TokenKind::Ident)
+        )
+    }
+}
+
+impl AstIndexable for VariableDecleration {
+    fn num_children(&self) -> usize {
+        (if self.variable_type.is_some() { 1 } else { 0 })
+            + (if self.possible_initializer.is_some() {
+                1
+            } else {
+                0
+            })
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => {
+                if let Some(ref ty) = self.variable_type {
+                    Some(&**ty)
+                } else if let Some((ref init, _)) = self.possible_initializer {
+                    Some(&**init)
+                } else {
+                    None
+                }
+            }
+            1 => {
+                if let Some((ref init, _)) = self.possible_initializer {
+                    Some(&**init)
+                } else {
+                    None
+                }
+            }
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecleration {
     pub identifier: Token,
@@ -500,32 +694,33 @@ pub struct FunctionDecleration {
     pub range: Range,
 }
 
-impl FunctionDecleration {
-    fn write(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        index: u32,
-        indent: &String,
-        last: bool,
-    ) -> std::fmt::Result {
-        let name = cast!(&self.identifier.token_type, TokenKind::Ident);
-        // let nindent = format!(
-        //     "{}{}",
-        //     indent,
-        //     if index == 0 {
-        //         ""
-        //     } else if last {
-        //         "    "
-        //     } else {
-        //         "│   "
-        //     }
-        // );
-        writeln!(
+impl Display for FunctionDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
             f,
-            "Function: {} => {:?}",
-            name, self.function_type.return_type
-        )?;
-        self.body.write(f, index + 1, indent, last)
+            "{} `{}`",
+            ColoredString::from("Function Decleration").cyan(),
+            cast!(&self.identifier.token_type, TokenKind::Ident)
+        )
+    }
+}
+
+impl AstIndexable for FunctionDecleration {
+    fn num_children(&self) -> usize {
+        if self.generic.is_some() {
+            3
+        } else {
+            2
+        }
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => Some(&self.function_type),
+            1 => Some(&*self.body),
+            2 => Some(&**self.generic.as_ref().unwrap()),
+            _ => panic!(),
+        }
     }
 }
 
@@ -538,6 +733,61 @@ pub struct TemplateDecleration {
     pub range: Range,
 }
 
+impl Display for TemplateDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} `{}`",
+            ColoredString::from("Template Decleration").cyan(),
+            cast!(&self.token.token_type, TokenKind::Ident)
+        )
+    }
+}
+
+impl AstIndexable for TemplateDecleration {
+    fn num_children(&self) -> usize {
+        if self.generic.is_some() {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => None,
+            1 => Some(&**self.generic.as_ref().unwrap()),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+        match index {
+            0 => Box::new(CreateParentBx(
+                ColoredString::from("Parameters").green().to_string(),
+                self.fields
+                    .iter()
+                    .map(
+                        |TypeSymbol {
+                             symbol_type,
+                             symbol,
+                         }| {
+                            let grp = Grouper(format!(
+                                "{}: {}",
+                                cast!(&symbol.token_type, TokenKind::Ident),
+                                symbol_type
+                            ));
+                            let b: Box<dyn AstIndexable> = Box::new(grp);
+                            b
+                        },
+                    )
+                    .collect(),
+            )),
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecleration {
     pub type_keyword: Range,
@@ -545,6 +795,18 @@ pub struct TypeDecleration {
     pub old_type: Type,
     pub assignment: Range,
     pub range: Range,
+}
+
+impl Display for TypeDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} `{}` = {}",
+            ColoredString::from("Type").cyan(),
+            cast!(&self.token.token_type, TokenKind::Ident),
+            self.old_type
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -557,6 +819,51 @@ pub struct ActionDecleration {
     pub range: Range,
 }
 
+impl Display for ActionDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(spec) = &self.specification {
+            write!(
+                f,
+                "{} {}: {}",
+                ColoredString::from("Action Decleration").cyan(),
+                self.template_type,
+                spec,
+            )
+        } else {
+            write!(
+                f,
+                "{} {}",
+                ColoredString::from("Action Decleration").cyan(),
+                self.template_type,
+            )
+        }
+    }
+}
+
+impl AstIndexable for ActionDecleration {
+    fn num_children(&self) -> usize {
+        if self.generic.is_some() {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => {
+                if let Some(generic) = &self.generic {
+                    Some(&**generic)
+                } else {
+                    Some(&*self.body)
+                }
+            }
+            1 => Some(&*self.body),
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecDecleration {
     pub spec_keyword: Range,
@@ -566,9 +873,68 @@ pub struct SpecDecleration {
     pub range: Range,
 }
 
+impl Display for SpecDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {}",
+            ColoredString::from("Spec Decleration").cyan(),
+            cast!(&self.identifier.token_type, TokenKind::Ident),
+        )
+    }
+}
+
+impl AstIndexable for SpecDecleration {
+    fn num_children(&self) -> usize {
+        if self.generic.is_some() {
+            1 + self.body.len()
+        } else {
+            self.body.len()
+        }
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match index {
+            0 => {
+                if let Some(generic) = &self.generic {
+                    Some(&**generic)
+                } else {
+                    Some(&self.body[index])
+                }
+            }
+            1 => Some(&self.body[index - 1]),
+            _ => panic!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpecBody {
     Function(Token, FunctionSignature),
+}
+
+impl Display for SpecBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpecBody::Function(tok, _) => {
+                write!(f, "{}", cast!(&tok.token_type, TokenKind::Ident),)
+            }
+        }
+    }
+}
+
+impl AstIndexable for SpecBody {
+    fn num_children(&self) -> usize {
+        match self {
+            Self::Function(_, _) => 1,
+        }
+    }
+
+    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+        match self {
+            Self::Function(_, fnb) => Some(fnb),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -584,11 +950,62 @@ pub struct GenericParameters {
     pub range: Range,
 }
 
+impl Display for GenericParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", ColoredString::from("Generic Parameter").cyan())
+    }
+}
+
+impl AstIndexable for GenericParameters {
+    fn num_children(&self) -> usize {
+        self.parameters.len()
+    }
+
+    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+        None
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn AstIndexable + 'a> {
+        let (child_name, restraints) = &self.parameters[index];
+        if let Some(res) = &restraints {
+            Box::new(CreateParent(
+                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+                res.iter()
+                    .map(|f| {
+                        let b: &dyn AstIndexable = f;
+                        b
+                    })
+                    .collect(),
+            ))
+        } else {
+            Box::new(Grouper(
+                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+            ))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecleration {
     pub import_keyword: Range,
     pub path: Vec<Expression>,
     pub range: Range,
+}
+
+impl Display for ImportDecleration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", ColoredString::from("Import").cyan())
+    }
+}
+
+impl AstIndexable for ImportDecleration {
+    fn num_children(&self) -> usize {
+        self.path.len()
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(&self.path[index])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -639,60 +1056,85 @@ impl ParseNode {
 
 impl Display for ParseNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.write(f, 0, &"".to_string(), false)
+        match self {
+            ParseNode::Expression(i, _) => write!(f, "{}", i),
+            ParseNode::Type(i, _) => write!(f, "{} {}", ColoredString::from("Type").cyan(), i),
+            ParseNode::VariableDecleration(i) => write!(f, "{}", i),
+            ParseNode::FunctionDecleration(i) => write!(f, "{}", i),
+            ParseNode::Block(_, _) => write!(f, "{}", ColoredString::from("Block").cyan()),
+            ParseNode::Yield(_, _) => write!(f, "{}", ColoredString::from("Yield").cyan()),
+            ParseNode::Return(_, _) => write!(f, "{}", ColoredString::from("Return").cyan()),
+            ParseNode::TemplateDecleration(i) => write!(f, "{}", i),
+            ParseNode::TypeDecleration(i) => write!(f, "{}", i),
+            ParseNode::ActionDecleration(i) => write!(f, "{}", i),
+            ParseNode::SpecDecleration(i) => write!(f, "{}", i),
+            ParseNode::GenericParameters(i) => write!(f, "{}", i),
+            ParseNode::Tag(_, _) => write!(f, "{}", ColoredString::from("Tag").cyan()),
+            ParseNode::TagCollection(_, _, _) => write!(f, "{}", ColoredString::from("Tag Collection").cyan()),
+            ParseNode::Import(i) => write!(f, "{}", i),
+            ParseNode::Punctuation(i, _) => write!(f, "{}", i),
+            ParseNode::None => write!(f, "{}", ColoredString::from("None").red()),
+        }
     }
 }
 
-impl ParseNode {
-    fn write(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        index: u32,
-        indent: &String,
-        last: bool,
-    ) -> std::fmt::Result {
-        write!(f, "{}", indent)?;
-        if index != 0 {
-            write!(f, "{}", if last { "└──" } else { "├──" })?;
+impl AstIndexable for ParseNode {
+    fn num_children(&self) -> usize {
+        match self {
+            ParseNode::Expression(i, _) => i.num_children(),
+            ParseNode::VariableDecleration(i) => i.num_children(),
+            ParseNode::FunctionDecleration(i) => i.num_children(),
+            ParseNode::Block(i, _) => i.len(),
+            ParseNode::Yield(_, _) => 1,
+            ParseNode::Return(_, _) => 1,
+            ParseNode::TemplateDecleration(i) => i.num_children(),
+            ParseNode::ActionDecleration(i) => i.num_children(),
+            ParseNode::SpecDecleration(i) => i.num_children(),
+            ParseNode::GenericParameters(i) => i.num_children(),
+            ParseNode::Tag(_, _) => 1,
+            ParseNode::TagCollection(i, _, _) => i.len() + 1,
+            ParseNode::Import(i) => i.num_children(),
+            _ => 0,
         }
-        let nindent = format!(
-            "{}{}",
-            indent,
-            if index == 0 {
-                ""
-            } else if last {
-                "    "
-            } else {
-                "│   "
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        match self {
+            ParseNode::Expression(i, _) => i.child_at(index),
+            ParseNode::VariableDecleration(i) => i.child_at(index),
+            ParseNode::FunctionDecleration(i) => i.child_at(index),
+            ParseNode::Block(i, _) => Some(&i[index]),
+            ParseNode::Yield(i, _) => Some(&**i),
+            ParseNode::Return(i, _) => Some(&**i),
+            ParseNode::TemplateDecleration(i) => i.child_at(index),
+            ParseNode::ActionDecleration(i) => i.child_at(index),
+            ParseNode::SpecDecleration(i) => i.child_at(index),
+            ParseNode::GenericParameters(i) => i.child_at(index),
+            ParseNode::Tag(i, _) => Some(i),
+            ParseNode::TagCollection(i, b, _) => {
+                if index < i.len() {
+                    Some(&i[index])
+                } else {
+                    Some(&**b)
+                }
             }
-        );
-        let res = match self {
-            ParseNode::Expression(e, _) => write!(f, "{:?}", e),
-            ParseNode::Type(e, _) => write!(f, "{:?}", e),
-            ParseNode::VariableDecleration(e) => write!(f, "{:?}", e),
-            ParseNode::FunctionDecleration(e) => e.write(f, index + 1, &nindent, true),
-            ParseNode::Block(e, _) => {
-                write!(f, "Block\n")?;
-                e.iter().enumerate().for_each(|(i, v)| {
-                    ParseNode::write(v, f, index + 1, &nindent, i == e.len() - 1).unwrap();
-                });
-                Ok(())
-            }
-            ParseNode::Yield(e, _) => write!(f, "Yield {:?}", e),
-            ParseNode::Return(e, _) => write!(f, "Return {:?}", e),
-            ParseNode::TemplateDecleration(e) => write!(f, "{:?}", e),
-            ParseNode::TypeDecleration(e) => write!(f, "{:?}", e),
-            ParseNode::ActionDecleration(e) => write!(f, "{:?}", e),
-            ParseNode::SpecDecleration(e) => write!(f, "{:?}", e),
-            ParseNode::GenericParameters(e) => write!(f, "{:?}", e),
-            ParseNode::Tag(e, _) => write!(f, "{:?}", e),
-            ParseNode::TagCollection(e, s, _) => write!(f, "Tag Collection: {:?} => {:?}", e, s),
-            ParseNode::Import(e) => write!(f, "{:?}", e),
-            ParseNode::Punctuation(e, _) => write!(f, "{:?}", e),
-            ParseNode::None => write!(f, "None"),
-        };
-        write!(f, "\n")?;
-        res
+            ParseNode::Import(i) => i.child_at(index),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+        match self {
+            ParseNode::Expression(i, _) => i.child_at_bx(index),
+            ParseNode::VariableDecleration(i) => i.child_at_bx(index),
+            ParseNode::FunctionDecleration(i) => i.child_at_bx(index),
+            ParseNode::TemplateDecleration(i) => i.child_at_bx(index),
+            ParseNode::ActionDecleration(i) => i.child_at_bx(index),
+            ParseNode::SpecDecleration(i) => i.child_at_bx(index),
+            ParseNode::GenericParameters(i) => i.child_at_bx(index),
+            ParseNode::Import(i) => i.child_at_bx(index),
+            _ => panic!(),
+        }
     }
 }
 
@@ -704,7 +1146,7 @@ pub struct ArrayInitializer {
 
 impl Display for ArrayInitializer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Array")
+        write!(f, "{}", ColoredString::from("Array").cyan())
     }
 }
 
@@ -713,8 +1155,8 @@ impl AstIndexable for ArrayInitializer {
         self.elements.len()
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        &self.elements[index]
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(&self.elements[index])
     }
 }
 
@@ -727,60 +1169,75 @@ pub struct TemplateInitializer {
 
 impl Display for TemplateInitializer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Template Initializer")
+        write!(f, "{}", ColoredString::from("Template Initializer").cyan())
     }
 }
 
 impl AstIndexable for TemplateInitializer {
     fn num_children(&self) -> usize {
-        if let Some(ty) = &self.named_type {
+        if let Some(_) = &self.named_type {
             self.initializer_values.len() + 2
         } else {
             self.initializer_values.len()
         }
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
-        self.initializer_values[index].1.as_ref().unwrap()
-        // &Grouper("Pod".to_string())
-        // if let Some(ty) = self.named_type {
-
-        //     self.initializer_values.len() + 2
-        // } else {
-        //     self.initializer_values.len()
-        // }
+    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+        None
     }
-}
 
-impl TemplateInitializer {
-    fn write(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        index: u32,
-        indent: &String,
-        last: bool,
-    ) -> std::fmt::Result {
-        write!(f, "{}", indent)?;
-        if index != 0 {
-            write!(f, "{}", if last { "└──" } else { "├──" })?;
-        }
-        let nindent = format!(
-            "{}{}",
-            indent,
-            if index == 0 {
-                ""
-            } else if last {
-                "    "
-            } else {
-                "│   "
-            }
-        );
+    fn child_at_bx(&self, index: usize) -> Box<dyn AstIndexable> {
+        // self.initializer_values[index].1.as_ref().unwrap()
+        // &Grouper("Pod".to_string())
         if let Some(ty) = &self.named_type {
-            write!(f, "Template {}", ty)?;
+            match index {
+                0 => Box::new(Grouper(
+                    ColoredString::from(format!("Type").as_str())
+                        .blue()
+                        .to_string(),
+                )),
+                1 => Box::new(Grouper(
+                    ColoredString::from(format!("{}", ty).as_str())
+                        .blue()
+                        .to_string(),
+                )),
+                _c => {
+                    let (name, value) = &self.initializer_values[index - 2];
+                    if let Some(value) = value {
+                        Box::new(CreateParent(
+                            ColoredString::from(format!("{}", name).as_str())
+                                .green()
+                                .to_string(),
+                            vec![],
+                        ))
+                    } else {
+                        Box::new(Grouper(
+                            ColoredString::from(format!("{}", name).as_str())
+                                .blue()
+                                .to_string(),
+                        ))
+                    }
+                }
+            }
+
+            // self.initializer_values.len() + 2
         } else {
-            write!(f, "Template ")?;
+            let (name, value) = &self.initializer_values[index];
+            if let Some(value) = value {
+                Box::new(CreateParent(
+                    ColoredString::from(format!("{}", name).as_str())
+                        .green()
+                        .to_string(),
+                    vec![],
+                ))
+            } else {
+                Box::new(Grouper(
+                    ColoredString::from(format!("{}", name).as_str())
+                        .blue()
+                        .to_string(),
+                ))
+            }
         }
-        write!(f, "\n")
     }
 }
 
@@ -814,9 +1271,21 @@ impl Literal {
 impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Literal::Integer(i, _, _) => write!(f, "Integer {}", i),
-            Literal::Float(b, _) => write!(f, "Float {}", b),
-            Literal::Boolean(b, _) => write!(f, "Boolean {}", b),
+            Literal::Integer(i, _, _) => write!(
+                f,
+                "Integer {}",
+                ColoredString::from(format!("{}", i).as_str()).yellow()
+            ),
+            Literal::Float(b, _) => write!(
+                f,
+                "Float {}",
+                ColoredString::from(format!("{}", b).as_str()).yellow()
+            ),
+            Literal::Boolean(b, _) => write!(
+                f,
+                "Boolean {}",
+                ColoredString::from(format!("{}", b).as_str()).yellow()
+            ),
             Literal::Array(b) => write!(f, "{}", b),
             Literal::StructInitializer(b) => write!(f, "{}", b),
             Literal::String(b, _) => write!(f, "String \"{}\"", b),
@@ -834,57 +1303,12 @@ impl AstIndexable for Literal {
         }
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
         match self {
             Literal::Array(b) => b.child_at(index),
             Literal::StructInitializer(b) => b.child_at(index),
             _ => panic!(),
         }
-    }
-}
-
-impl Literal {
-    fn write(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        index: u32,
-        indent: &String,
-        last: bool,
-    ) -> std::fmt::Result {
-        write!(f, "{}", indent)?;
-        if index != 0 {
-            write!(f, "{}", if last { "└──" } else { "├──" })?;
-        }
-        let nindent = format!(
-            "{}{}",
-            indent,
-            if index == 0 {
-                ""
-            } else if last {
-                "    "
-            } else {
-                "│   "
-            }
-        );
-        let res = match self {
-            Literal::Empty => f.write_str("Empty"),
-            Literal::Float(val, _) => {
-                f.write_str(&ColoredString::from(format!("{}", val).as_str()).yellow())
-            }
-            Literal::Boolean(val, _) => {
-                f.write_str(&ColoredString::from(format!("{}", val).as_str()).blue())
-            }
-            Literal::Integer(val, _, _) => {
-                f.write_str(&ColoredString::from(format!("{}", val).as_str()).yellow())
-            }
-            Literal::Array(ArrayInitializer { elements, .. }) => {
-                f.write_fmt(format_args!("{:?}", elements))
-            }
-            Literal::StructInitializer(i) => i.write(f, index + 1, &nindent, true),
-            Literal::String(i, _) => write!(f, "\"{}\"", i),
-        };
-        write!(f, "\n")?;
-        res
     }
 }
 
@@ -901,7 +1325,43 @@ impl AstIndexable for Grouper {
         0
     }
 
-    fn child_at(&self, index: usize) -> &dyn AstIndexable {
+    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
         panic!()
+    }
+}
+
+struct CreateParent<'a>(String, Vec<&'a dyn AstIndexable>);
+
+impl Display for CreateParent<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AstIndexable for CreateParent<'_> {
+    fn num_children(&self) -> usize {
+        self.1.len()
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(self.1[index])
+    }
+}
+
+struct CreateParentBx(String, Vec<Box<dyn AstIndexable>>);
+
+impl Display for CreateParentBx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AstIndexable for CreateParentBx {
+    fn num_children(&self) -> usize {
+        self.1.len()
+    }
+
+    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+        Some(&*self.1[index])
     }
 }
