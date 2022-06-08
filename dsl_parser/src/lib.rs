@@ -2,9 +2,9 @@
 use std::collections::{linked_list::Cursor, LinkedList};
 
 use dsl_lexer::ast::{
-    ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, IndexExpression,
-    FunctionCall, FunctionDecleration, FunctionSignature, FunctionType, GenericParameters,
-    GenericType, IfExpression, ImportDecleration, Literal, Loop, LoopExpression, ParseNode,
+    ActionDecleration, ArrayInitializer, ArrayType, BinaryExpression, Expression, FunctionCall,
+    FunctionDecleration, FunctionSignature, FunctionType, GenericParameters, GenericType,
+    IfExpression, ImportDecleration, IndexExpression, Literal, Loop, LoopExpression, ParseNode,
     ReferenceType, SpecBody, SpecDecleration, TemplateDecleration, TemplateInitializer, Type,
     TypeDecleration, TypeSymbol, UnaryExpression, VariableDecleration,
 };
@@ -766,7 +766,7 @@ fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expres
                 if let Some(Token {
                     token_type: TokenKind::OpenBrace,
                     ..
-                }) = tokens.peek_next()
+                }) = tokens.current()
                 {
                     let body = parse_block_statement(tokens)?;
                     let range = (t.range.0, body.get_range().1);
@@ -776,14 +776,12 @@ fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expres
                         range,
                     }))
                 } else {
+                    let expression = parse_expression(tokens, 0)?;
                     let body = parse_block_statement(tokens)?;
                     let range = (t.range.0, body.get_range().1);
                     Ok(Expression::LoopExpression(LoopExpression {
                         keyword: t.range,
-                        loop_type: Loop::Until(
-                            Box::new(parse_expression(tokens, 0)?),
-                            Box::new(body),
-                        ),
+                        loop_type: Loop::Until(Box::new(expression), Box::new(body)),
 
                         range,
                     }))
@@ -1055,21 +1053,31 @@ fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> 
 }
 
 fn parse_ident(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
-    let possible_type = parse_type(tokens)?;
+    let possible_type = parse_type(tokens);
 
     if let Some(Token {
         token_type: TokenKind::OpenBrace,
         ..
     }) = tokens.current()
     {
-        parse_template_initializer(tokens, Some(Box::new(possible_type)))
+        if let Ok(ty) = possible_type {
+            parse_template_initializer(tokens, Some(Box::new(ty)))
+        } else {
+            Err(ParseError::new(&format!("Type expected")))
+        }
     } else {
         match possible_type {
-            Type::NamedType(t) => match t.token_type {
+            Ok(Type::NamedType(t)) => match t.token_type {
                 TokenKind::Ident(_) => Ok(Expression::Identifier(t)),
                 _ => Err(ParseError::new(&format!("Unexpected type in expression!"))),
             },
-            _ => Err(ParseError::new(&format!("Unexpected type in expression!"))),
+            _ => {
+                if let Some(ident) = tokens.current() {
+                    Ok(Expression::Identifier((*ident).clone()))
+                } else {
+                    Err(ParseError::new(&format!("Expected identifer")))
+                }
+            }
         }
     }
 }
@@ -1323,6 +1331,7 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                 let lt = tokens.current().unwrap();
                 tokens.move_next();
                 let mut type_arguments = vec![];
+                let mut it = 1;
                 while let Some(_) = tokens.current() {
                     if let Some(Token {
                         token_type:
@@ -1336,12 +1345,20 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                         break;
                     }
 
-                    let arg_type = parse_type(tokens)?;
+                    let arg_type = match parse_type(tokens) {
+                        Ok(ty) => ty,
+                        Err(e) => {
+                            for _ in 0..it {
+                                tokens.move_prev();
+                            }
+                            return result;
+                        }
+                    };
                     type_arguments.push(arg_type);
 
                     match tokens.current() {
                         Some(t) => match t.token_type {
-                            TokenKind::Comma => tokens.move_next(),
+                            TokenKind::Comma => {tokens.move_next(); it += 1;},
                             TokenKind::Operator(Operator {
                                 operator: OperatorKind::Gt,
                                 ..

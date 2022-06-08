@@ -13,3 +13,4 @@ dsl_symbol = {path = "../dsl_symbol"}
 dsl_errors= {path = "../dsl_errors"}
 dsl_llvm = {path = "../dsl_llvm"}
 llvm-sys = {path ="../llvm-sys"}
+colored = "2"

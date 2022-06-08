@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use colored::{ColoredString, Colorize};
 use dsl_llvm::IRBuilder;
 use llvm_sys::{
     core::LLVMCreateBuilder,
@@ -67,6 +68,9 @@ impl Module {
     pub fn gen(&self) {
         let s = self.ast.clone();
         self.gen_parse_node(&s);
+        for err in self.errors.borrow().iter() {
+            println!("{}: {}", ColoredString::from("Error").bright_red(), err.message);
+        }
     }
 
     pub fn get_symbol<'a>(&self, sym: &'a Symbol, chain: &[String]) -> Option<&'a Symbol> {

@@ -1,17 +1,9 @@
 
 int main(int argc)
 {
-    int d = 5;
-    if (d == 5)
+    int x = 5;
+    while (x < 20)
     {
-        d = 6;
-    }
-    else if (d == 4)
-    {
-        d = 0;
-    }
-    else
-    {
-        d = 7;
+        x++;
     }
 }

@@ -269,8 +269,8 @@ impl Display for LoopExpression {
 impl AstIndexable for LoopExpression {
     fn num_children(&self) -> usize {
         match &self.loop_type {
-            Loop::Infinite(_) => 0,
-            Loop::Until(_, _) => 1,
+            Loop::Infinite(_) => 1,
+            Loop::Until(_, _) => 2,
         }
     }
 

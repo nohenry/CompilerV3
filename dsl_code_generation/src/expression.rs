@@ -4,7 +4,8 @@ use dsl_errors::go;
 use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
-    BinaryExpression, Expression, IndexExpression, IfExpression, UnaryExpression,
+    BinaryExpression, Expression, IfExpression, IndexExpression, Loop, LoopExpression,
+    UnaryExpression,
 };
 use dsl_lexer::{OperatorKind, TokenKind};
 use dsl_util::{c_str, cast, NULL_STR};
@@ -62,12 +63,44 @@ impl Module {
                                 let left = self.gen_expression(left);
                                 let right = self.gen_expression(right);
                                 match left.get_type() {
-                                    Type::Integer { .. } | Type::Boolean { .. } => {
+                                    Type::Integer { signed, .. } => {
                                         let func = match c {
                                             Eq => LLVMIntPredicate::LLVMIntEQ,
+                                            NEq => LLVMIntPredicate::LLVMIntNE,
+                                            Lt if *signed => LLVMIntPredicate::LLVMIntSLT,
+                                            LtEq if *signed => LLVMIntPredicate::LLVMIntSLE,
+                                            Gt if *signed => LLVMIntPredicate::LLVMIntSGT,
+                                            GtEq if *signed => LLVMIntPredicate::LLVMIntSGE,
+                                            NGt if *signed => LLVMIntPredicate::LLVMIntSLE,
+                                            NLt if *signed => LLVMIntPredicate::LLVMIntSGE,
+
+                                            Lt if !*signed => LLVMIntPredicate::LLVMIntULT,
+                                            LtEq if !*signed => LLVMIntPredicate::LLVMIntULE,
+                                            Gt if !*signed => LLVMIntPredicate::LLVMIntUGT,
+                                            GtEq if !*signed => LLVMIntPredicate::LLVMIntUGE,
+                                            NGt if !*signed => LLVMIntPredicate::LLVMIntULE,
+                                            NLt if !*signed => LLVMIntPredicate::LLVMIntUGE,
                                             _ => {
                                                 self.add_error(format!(
-                                                    "Unsupported binary operation {:?}",
+                                                    "Unsupported binary comparison operation {:?}",
+                                                    c
+                                                ));
+                                                return Value::Empty;
+                                            }
+                                        };
+                                        return go!(
+                                            self,
+                                            self.builder.create_icompare(&left, &right, func),
+                                            Value
+                                        );
+                                    }
+                                    Type::Boolean { .. } => {
+                                        let func = match c {
+                                            Eq => LLVMIntPredicate::LLVMIntEQ,
+                                            NEq => LLVMIntPredicate::LLVMIntNE,
+                                            _ => {
+                                                self.add_error(format!(
+                                                    "Unsupported binary comparison operation {:?}",
                                                     c
                                                 ));
                                                 return Value::Empty;
@@ -229,13 +262,8 @@ impl Module {
                 };
 
                 if let Some((_, ec)) = else_clause {
-                    let else_body = unsafe {
-                        LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR)
-                        // LLVMAppendBasicBlock(
-                        //     self.current_function.borrow().as_mut().unwrap(),
-                        //     NULL_STR,
-                        // )
-                    };
+                    let else_body =
+                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
 
                     let (end, empty) = match *self.jump_point.borrow() {
                         Value::Empty => unsafe {
@@ -273,16 +301,22 @@ impl Module {
 
                     self.builder.set_position_end(else_body);
                     self.gen_parse_node(&ec);
-                    let brn = go!(self, self.builder.create_branch(end), Value);
-                    match brn {
-                        Value::Instruction { llvm_value } => unsafe {
-                            let strds = LLVMMDString(
-                                CString::new("Hello".to_string()).unwrap().as_ptr(),
-                                5,
-                            );
-                            LLVMSetMetadata(llvm_value, LLVMGetMDKindID(c_str!("Potato"), 6), strds)
-                        },
-                        _ => (),
+                    if !empty {
+                        let brn = go!(self, self.builder.create_branch(end), Value);
+                        match brn {
+                            Value::Instruction { llvm_value } => unsafe {
+                                let strds = LLVMMDString(
+                                    CString::new("Hello".to_string()).unwrap().as_ptr(),
+                                    5,
+                                );
+                                LLVMSetMetadata(
+                                    llvm_value,
+                                    LLVMGetMDKindID(c_str!("Potato"), 6),
+                                    strds,
+                                )
+                            },
+                            _ => (),
+                        }
                     }
 
                     if empty {
@@ -336,6 +370,72 @@ impl Module {
 
                 Value::Empty
             }
+            Expression::LoopExpression(LoopExpression { loop_type, .. }) => match loop_type {
+                Loop::Until(cond, body) => {
+                    let condition_block = unsafe {
+                        LLVMAppendBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            NULL_STR,
+                        )
+                    };
+
+                    let body_block =
+                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
+
+                    let end =
+                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
+
+                    go!(self, self.builder.create_branch(condition_block), Value);
+
+                    self.builder.set_position_end(condition_block);
+                    let cond = self.gen_expression(cond);
+
+                    go!(
+                        self,
+                        self.builder.create_cbranch(&cond, body_block, end),
+                        Value
+                    );
+
+                    unsafe {
+                        LLVMAppendExistingBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            body_block,
+                        );
+                    }
+
+                    self.builder.set_position_end(body_block);
+
+                    self.gen_parse_node(body);
+
+                    let val = go!(self, self.builder.create_branch(condition_block), Value);
+
+                    unsafe {
+                        LLVMAppendExistingBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            end,
+                        )
+                    };
+
+                    self.builder.set_position_end(end);
+
+                    val
+                }
+                Loop::Infinite(body) => {
+                    let loop_block = unsafe {
+                        LLVMAppendBasicBlock(
+                            self.current_function.borrow().as_mut().unwrap(),
+                            NULL_STR,
+                        )
+                    };
+                    go!(self, self.builder.create_branch(loop_block), Value);
+
+                    self.builder.set_position_end(loop_block);
+
+                    self.gen_parse_node(body);
+
+                    go!(self, self.builder.create_branch(loop_block), Value)
+                }
+            },
             _ => {
                 self.add_error(String::from("Unsupported expression"));
                 Value::Empty
