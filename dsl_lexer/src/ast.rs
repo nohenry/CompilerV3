@@ -298,6 +298,8 @@ pub enum Expression {
 
     IfExpression(IfExpression),
     LoopExpression(LoopExpression),
+
+    Block(/* Statements */ Vec<ParseNode>, Range),
 }
 
 impl Expression {
@@ -312,6 +314,7 @@ impl Expression {
             Expression::Index(t) => (t.index_expression.get_range().0, t.square_range.1),
             Expression::IfExpression(t) => (t.range),
             Expression::LoopExpression(t) => (t.range),
+            Expression::Block(_, f) => f.clone(),
         }
     }
 }
@@ -328,6 +331,8 @@ impl Display for Expression {
             Expression::Index(b) => write!(f, "{}", b),
             Expression::IfExpression(b) => write!(f, "{}", b),
             Expression::LoopExpression(b) => write!(f, "{}", b),
+
+            Expression::Block(_, _) => write!(f, "{}", ColoredString::from("Block").cyan()),
         }
     }
 }
@@ -344,6 +349,8 @@ impl AstIndexable for Expression {
             Expression::Index(l) => l.num_children(),
             Expression::IfExpression(l) => l.num_children(),
             Expression::LoopExpression(l) => l.num_children(),
+
+            Expression::Block(i, _) => i.len(),
         }
     }
 
@@ -356,6 +363,8 @@ impl AstIndexable for Expression {
             Expression::Index(l) => l.child_at(index),
             Expression::IfExpression(l) => l.child_at(index),
             Expression::LoopExpression(l) => l.child_at(index),
+
+            Expression::Block(i, _) => Some(&i[index]),
             _ => panic!(),
         }
     }
@@ -1015,7 +1024,6 @@ pub enum ParseNode {
     Type(Type, Range),
     VariableDecleration(VariableDecleration),
     FunctionDecleration(FunctionDecleration),
-    Block(/* Statements */ Vec<ParseNode>, Range),
     Yield(Box<Expression>, Range),
     Return(Box<Expression>, Range),
     TemplateDecleration(TemplateDecleration),
@@ -1036,7 +1044,6 @@ impl ParseNode {
             ParseNode::Type(_, r) => r.clone(),
             ParseNode::VariableDecleration(v) => v.range,
             ParseNode::FunctionDecleration(f) => f.range,
-            ParseNode::Block(_, f) => f.clone(),
             ParseNode::Yield(_, f) => f.clone(),
             ParseNode::Return(_, f) => f.clone(),
             ParseNode::TemplateDecleration(s) => s.range,
@@ -1061,7 +1068,6 @@ impl Display for ParseNode {
             ParseNode::Type(i, _) => write!(f, "{} {}", ColoredString::from("Type").cyan(), i),
             ParseNode::VariableDecleration(i) => write!(f, "{}", i),
             ParseNode::FunctionDecleration(i) => write!(f, "{}", i),
-            ParseNode::Block(_, _) => write!(f, "{}", ColoredString::from("Block").cyan()),
             ParseNode::Yield(_, _) => write!(f, "{}", ColoredString::from("Yield").cyan()),
             ParseNode::Return(_, _) => write!(f, "{}", ColoredString::from("Return").cyan()),
             ParseNode::TemplateDecleration(i) => write!(f, "{}", i),
@@ -1070,7 +1076,9 @@ impl Display for ParseNode {
             ParseNode::SpecDecleration(i) => write!(f, "{}", i),
             ParseNode::GenericParameters(i) => write!(f, "{}", i),
             ParseNode::Tag(_, _) => write!(f, "{}", ColoredString::from("Tag").cyan()),
-            ParseNode::TagCollection(_, _, _) => write!(f, "{}", ColoredString::from("Tag Collection").cyan()),
+            ParseNode::TagCollection(_, _, _) => {
+                write!(f, "{}", ColoredString::from("Tag Collection").cyan())
+            }
             ParseNode::Import(i) => write!(f, "{}", i),
             ParseNode::Punctuation(i, _) => write!(f, "{}", i),
             ParseNode::None => write!(f, "{}", ColoredString::from("None").red()),
@@ -1084,7 +1092,6 @@ impl AstIndexable for ParseNode {
             ParseNode::Expression(i, _) => i.num_children(),
             ParseNode::VariableDecleration(i) => i.num_children(),
             ParseNode::FunctionDecleration(i) => i.num_children(),
-            ParseNode::Block(i, _) => i.len(),
             ParseNode::Yield(_, _) => 1,
             ParseNode::Return(_, _) => 1,
             ParseNode::TemplateDecleration(i) => i.num_children(),
@@ -1103,7 +1110,6 @@ impl AstIndexable for ParseNode {
             ParseNode::Expression(i, _) => i.child_at(index),
             ParseNode::VariableDecleration(i) => i.child_at(index),
             ParseNode::FunctionDecleration(i) => i.child_at(index),
-            ParseNode::Block(i, _) => Some(&i[index]),
             ParseNode::Yield(i, _) => Some(&**i),
             ParseNode::Return(i, _) => Some(&**i),
             ParseNode::TemplateDecleration(i) => i.child_at(index),

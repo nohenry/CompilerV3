@@ -1,7 +1,4 @@
 
 main() => {
-    let d = 5
-    loop d < 5 {
-        d += 1
-    } 
+    let d = if true { 5 } else { 7 }
 }

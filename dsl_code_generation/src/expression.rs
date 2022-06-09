@@ -288,7 +288,13 @@ impl Module {
                     );
 
                     self.builder.set_position_end(if_body);
-                    self.gen_parse_node(&body);
+                    let if_ret = self.gen_parse_node(&body);
+                    match *self.current_storage.borrow() {
+                        Value::Empty => (),
+                        ref r => {
+                            go!(self, self.builder.create_store(r, &if_ret), Value);
+                        }
+                    };
 
                     go!(self, self.builder.create_branch(end), Value);
 
@@ -300,24 +306,13 @@ impl Module {
                     }
 
                     self.builder.set_position_end(else_body);
-                    self.gen_parse_node(&ec);
-                    if !empty {
-                        let brn = go!(self, self.builder.create_branch(end), Value);
-                        match brn {
-                            Value::Instruction { llvm_value } => unsafe {
-                                let strds = LLVMMDString(
-                                    CString::new("Hello".to_string()).unwrap().as_ptr(),
-                                    5,
-                                );
-                                LLVMSetMetadata(
-                                    llvm_value,
-                                    LLVMGetMDKindID(c_str!("Potato"), 6),
-                                    strds,
-                                )
-                            },
-                            _ => (),
+                    let else_ret = self.gen_parse_node(&ec);
+                    match *self.current_storage.borrow() {
+                        Value::Empty => (),
+                        ref r => {
+                            go!(self, self.builder.create_store(r, &else_ret), Value);
                         }
-                    }
+                    };
 
                     if empty {
                         unsafe {
@@ -326,6 +321,8 @@ impl Module {
                                 end,
                             );
                         }
+
+                        go!(self, self.builder.create_branch(end), Value);
                     }
                     self.builder.set_position_end(end);
 
@@ -436,6 +433,13 @@ impl Module {
                     go!(self, self.builder.create_branch(loop_block), Value)
                 }
             },
+            Expression::Block(values, _) => {
+                return values
+                    .iter()
+                    .map(|stmt| self.gen_parse_node(stmt))
+                    .last()
+                    .unwrap()
+            }
             _ => {
                 self.add_error(String::from("Unsupported expression"));
                 Value::Empty

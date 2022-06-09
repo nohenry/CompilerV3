@@ -1,14 +1,10 @@
-use std::{
-    cell::{Ref, RefCell},
-    fmt::Debug,
-    rc::Rc,
-};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 use colored::{ColoredString, Colorize};
 use dsl_llvm::IRBuilder;
 use llvm_sys::{
     core::LLVMCreateBuilder,
-    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMValueRef},
+    prelude::{LLVMBasicBlockRef, LLVMModuleRef, LLVMValueRef},
 };
 
 use dsl_lexer::ast::ParseNode;
@@ -17,11 +13,11 @@ use dsl_errors::CodeGenError;
 use dsl_symbol::{Symbol, SymbolValue, Value};
 
 pub struct Module {
-    // pub(super) name: String,
     pub(super) ast: Box<ParseNode>,
     pub(super) module: LLVMModuleRef,
     pub(super) current_block: Rc<RefCell<LLVMBasicBlockRef>>,
     pub(super) current_function: Rc<RefCell<LLVMValueRef>>,
+    pub(super) current_storage: Rc<RefCell<Value>>,
     pub(super) jump_point: Rc<RefCell<Value>>,
     pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
@@ -53,6 +49,7 @@ impl Module {
             module,
             current_block: Rc::new(RefCell::new(std::ptr::null_mut())),
             current_function: Rc::new(RefCell::new(std::ptr::null_mut())),
+            current_storage: Rc::new(RefCell::new(Value::Empty)),
             jump_point: Rc::new(RefCell::new(Value::Empty)),
             builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
@@ -69,7 +66,11 @@ impl Module {
         let s = self.ast.clone();
         self.gen_parse_node(&s);
         for err in self.errors.borrow().iter() {
-            println!("{}: {}", ColoredString::from("Error").bright_red(), err.message);
+            println!(
+                "{}: {}",
+                ColoredString::from("Error").bright_red(),
+                err.message
+            );
         }
     }
 

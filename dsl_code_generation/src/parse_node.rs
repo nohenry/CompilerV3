@@ -1,13 +1,12 @@
+use std::cell::RefCell;
 use std::ffi::CString;
 
 use dsl_errors::go;
 use llvm_sys::core::{
-    LLVMAddFunction, LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildLoad2, LLVMBuildRetVoid,
-    LLVMBuildStore, LLVMFunctionType, LLVMGetLastInstruction, LLVMInt1Type, LLVMPositionBuilder,
-    LLVMPositionBuilderAtEnd,
+    LLVMAddFunction, LLVMAppendBasicBlock, LLVMFunctionType, LLVMGetLastInstruction, LLVMInt1Type,
 };
 
-use dsl_lexer::ast::{FunctionDecleration, ParseNode, VariableDecleration};
+use dsl_lexer::ast::{Expression, FunctionDecleration, ParseNode, VariableDecleration};
 use dsl_lexer::TokenKind;
 use dsl_util::{c_str, cast};
 
@@ -18,7 +17,7 @@ impl Module {
     pub(super) fn gen_parse_node(&self, node: &ParseNode) -> Value {
         match node {
             ParseNode::Expression(e, _) => {
-                self.gen_expression(e);
+                return self.gen_expression(e);
             }
             ParseNode::VariableDecleration(VariableDecleration {
                 identifier,
@@ -39,20 +38,35 @@ impl Module {
                 };
 
                 let place_var = if let Some((init, ..)) = possible_initializer {
-                    let value = self.gen_expression(init.as_ref());
+                    match &**init {
+                        Expression::IfExpression(_) => {
+                            let place_var = go!(self, self.builder.create_alloc(&ty), Value);
+                            self.current_storage.replace(place_var);
+                            self.gen_expression(init.as_ref());
+                            let val = self.current_storage.borrow().to_owned();
+                            self.current_storage.replace(Value::Empty);
 
-                    self.builder.set_position(
-                        unsafe { self.current_block.borrow().as_mut().unwrap() },
-                        nop,
-                    );
+                            val
+                        }
+                        _ => {
+                            let value = self.gen_expression(init.as_ref());
 
-                    let var = go!(self, self.builder.create_alloc(&value.get_type()), Value);
+                            self.builder.set_position(
+                                unsafe { self.current_block.borrow().as_mut().unwrap() },
+                                nop,
+                            );
 
-                    self.builder
-                        .set_position_end(unsafe { self.current_block.borrow().as_mut().unwrap() });
+                            let var =
+                                go!(self, self.builder.create_alloc(&value.get_type()), Value);
 
-                    go!(self, self.builder.create_store(&var, &value), Value);
-                    var
+                            self.builder.set_position_end(unsafe {
+                                self.current_block.borrow().as_mut().unwrap()
+                            });
+
+                            go!(self, self.builder.create_store(&var, &value), Value);
+                            var
+                        }
+                    }
                 } else {
                     let place_var = go!(self, self.builder.create_alloc(&ty), Value);
                     place_var
@@ -94,9 +108,7 @@ impl Module {
 
                 self.builder.create_ret_void();
             }
-            ParseNode::Block(values, _) => values.iter().for_each(|stmt| {
-                self.gen_parse_node(stmt);
-            }),
+
             _ => (),
         };
         Value::Empty

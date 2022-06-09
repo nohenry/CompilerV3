@@ -56,7 +56,10 @@ pub fn parse_from_tokens(tokens: &LinkedList<&Token>) -> Result<ParseNode, Parse
     } else {
         default_range()
     };
-    Ok(ParseNode::Block(statements, (start.0, end.1)))
+    Ok(ParseNode::Expression(
+        Expression::Block(statements, (start.0, end.1)),
+        (start.0, end.1),
+    ))
 }
 
 fn parse_top_level_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
@@ -251,7 +254,10 @@ fn parse_action(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
         template_type,
         generic,
         specification: spec,
-        body: Box::new(ParseNode::Block(statements, (left.range.0, right.range.1))),
+        body: Box::new(ParseNode::Expression(
+            Expression::Block(statements, (left.range.0, right.range.1)),
+            (left.range.0, right.range.1),
+        )),
         range: (keyword.range.0, right.range.1),
     }))
 }
@@ -508,7 +514,7 @@ fn parse_function_type(
     })
 }
 
-fn parse_block_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+fn parse_block_statement_expr(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
     let op = expect(tokens, TokenKind::OpenBrace)?;
     let mut statements = vec![];
     while let Some(_) = tokens.current() {
@@ -533,7 +539,13 @@ fn parse_block_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, Parse
         };
     }
     let cp = expect(tokens, TokenKind::CloseBrace)?;
-    Ok(ParseNode::Block(statements, (op.range.0, cp.range.1)))
+    Ok(Expression::Block(statements, (op.range.0, cp.range.1)))
+}
+
+fn parse_block_statement(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
+    let expr = parse_block_statement_expr(tokens)?;
+    let rng = expr.get_range();
+    Ok(ParseNode::Expression(expr, rng))
 }
 
 fn parse_operator_expression(
@@ -642,6 +654,7 @@ fn parse_operator_expression(
 fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expression, ParseError> {
     match tokens.current() {
         Some(t) => match t.token_type {
+            TokenKind::OpenBrace => parse_block_statement_expr(tokens),
             TokenKind::Keyword(Keyword {
                 keyword: KeywordKind::If,
                 ..
@@ -683,10 +696,7 @@ fn parse_expression(tokens: &mut Cursor<&Token>, prev_prec: u8) -> Result<Expres
 
                         let condition = parse_expression(tokens, 0)?;
                         let body = parse_block_statement(tokens)?;
-                        // let expr = ParseNode::Expression(
-                        //     Expression::IfExpression(),
-                        //     (erange.0, body.get_range().1),
-                        // );
+
                         let end = body.get_range().1;
                         clauses.push(IfExpression {
                             if_token: (erange.0, irange.1),
@@ -1358,7 +1368,10 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
 
                     match tokens.current() {
                         Some(t) => match t.token_type {
-                            TokenKind::Comma => {tokens.move_next(); it += 1;},
+                            TokenKind::Comma => {
+                                tokens.move_next();
+                                it += 1;
+                            }
                             TokenKind::Operator(Operator {
                                 operator: OperatorKind::Gt,
                                 ..
