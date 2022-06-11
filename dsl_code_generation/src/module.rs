@@ -22,7 +22,7 @@ pub struct Module {
     pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
     pub(super) symbol_root: Rc<RefCell<Symbol>>,
-    pub(super) current_symbol: Vec<String>,
+    pub(super) current_symbol: Rc<RefCell<Vec<String>>>,
 }
 
 impl Debug for Module {
@@ -54,7 +54,7 @@ impl Module {
             builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,
-            current_symbol: vec![name.clone()],
+            current_symbol: Rc::new(RefCell::new(vec![name.clone()])),
         }
     }
 
@@ -108,21 +108,32 @@ impl Module {
         Some(f)
     }
 
+    pub fn add_and_set_symbol(&self, name: &String, sym: SymbolValue) {
+        let mut cur_sym = self.symbol_root.borrow_mut();
+        let current = self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+        if let Some(c) = current {
+            c.add_child(name, sym);
+        }
+
+        self.current_symbol.borrow_mut().push(name.clone())
+    }
+
     pub fn get_current(&self, f: impl Fn(Option<&Symbol>)) {
         let sym = self.symbol_root.borrow();
-        let current = self.get_symbol(&sym, &self.current_symbol);
+        let current = self.get_symbol(&sym, &self.current_symbol.borrow());
         (f)(current);
     }
 
     pub fn get_current_mut(&self, f: impl Fn(Option<&mut Symbol>)) {
         let mut sym = self.symbol_root.borrow_mut();
-        let current = self.get_symbol_mut(&mut sym, &self.current_symbol);
+        let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
         (f)(current);
     }
 
     pub fn find_symbol(&self, name: &String, f: impl Fn(Option<&Symbol>)) {
         let sym = self.symbol_root.borrow();
-        let sym = self.find_up_chain(&sym, &self.current_symbol, name);
+        let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), name);
         (f)(sym);
     }
 

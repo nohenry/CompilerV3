@@ -11,7 +11,6 @@ use std::{
     rc::Rc,
 };
 
-use dsl_lexer::ast::AstIndexable;
 use dsl_symbol::Symbol;
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
@@ -27,7 +26,7 @@ use llvm_sys::{
     },
 };
 
-use dsl_util::c_str;
+use dsl_util::{c_str, TreeDisplay};
 
 fn create_target_machine() -> LLVMTargetMachineRef {
     unsafe {
@@ -164,6 +163,9 @@ fn main() {
             dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
 
         module.gen();
+
+        let sym = symbols.borrow();
+        println!("{}", sym.format());
 
         let filename = path.file_name().unwrap();
         emit(

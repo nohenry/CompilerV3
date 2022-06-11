@@ -3,10 +3,10 @@ use dsl_errors::CodeGenError;
 use dsl_util::NULL_STR;
 use llvm_sys::{
     core::{
-        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp,
-        LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg, LLVMBuildRetVoid, LLVMBuildStore,
-        LLVMConstInt, LLVMConstReal, LLVMInt64Type, LLVMPointerType, LLVMPositionBuilder,
-        LLVMPositionBuilderAtEnd, LLVMBuildBr, LLVMAppendBasicBlock,
+        LLVMAppendBasicBlock, LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildBr, LLVMBuildCondBr,
+        LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg,
+        LLVMBuildPhi, LLVMBuildRetVoid, LLVMBuildStore, LLVMConstInt, LLVMConstReal, LLVMInt64Type,
+        LLVMPointerType, LLVMPositionBuilder, LLVMPositionBuilderAtEnd, LLVMAddIncoming,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMValueRef},
     LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate,
@@ -420,6 +420,70 @@ impl IRBuilder {
     pub fn create_branch(&self, branch: LLVMBasicBlockRef) -> Result<Value, CodeGenError> {
         let value = unsafe { LLVMBuildBr(self.builder, branch) };
         Ok(Value::Instruction { llvm_value: value })
+    }
+
+    pub fn create_phi(&self, a: &Value, b: &Value, a_block: LLVMBasicBlockRef, b_block: LLVMBasicBlockRef) -> Result<Value, CodeGenError> {
+        if a.get_type() != b.get_type() {
+            return Err(CodeGenError {
+                message: "Incompatible types in branch return!".to_string(),
+            });
+        }
+        let phi_node = unsafe { LLVMBuildPhi(self.builder, a.get_type().get_type(), NULL_STR) };
+
+        let a_node = match &a {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => unsafe {
+                LLVMBuildLoad2(
+                    self.builder,
+                    variable_type.get_type(),
+                    *llvm_value,
+                    NULL_STR,
+                )
+            },
+            Value::Literal { llvm_value, .. } => *llvm_value,
+            Value::Instruction { llvm_value } => *llvm_value,
+            Value::Load { llvm_value, .. } => *llvm_value,
+            _ => {
+                return Err(CodeGenError {
+                    message: "Unable to return value from branch".to_string(),
+                })
+            }
+        };
+
+        let b_node = match &b {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => unsafe {
+                LLVMBuildLoad2(
+                    self.builder,
+                    variable_type.get_type(),
+                    *llvm_value,
+                    NULL_STR,
+                )
+            },
+            Value::Literal { llvm_value, .. } => *llvm_value,
+            Value::Instruction { llvm_value } => *llvm_value,
+            Value::Load { llvm_value, .. } => *llvm_value,
+            _ => {
+                return Err(CodeGenError {
+                    message: "Unable to return value from branch".to_string(),
+                })
+            }
+        };
+
+        let mut vals = [a_node, b_node];
+        let mut blocks = [a_block, b_block];
+        unsafe {
+            LLVMAddIncoming(phi_node, vals.as_mut_ptr(), blocks.as_mut_ptr(), 2)
+        }
+
+        Ok(Value::Literal {
+            llvm_value: phi_node,
+            literal_type: a.get_type().clone(),
+        })
     }
 
     pub fn append_block(&self) -> Result<Value, CodeGenError> {

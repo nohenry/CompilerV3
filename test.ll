@@ -2,17 +2,16 @@
 source_filename = "test/test.dsl"
 
 define void @main() {
-  %1 = alloca i1, align 1
-  br i1 true, label %2, label %3
+  br label %1
 
-2:                                                ; preds = %0
-  store i32 5, i1* %1, align 4
+1:                                                ; preds = %0
+  %2 = alloca i32, align 4
+  br label %3
+
+3:                                                ; preds = %1
   br label %4
 
-3:                                                ; preds = %0
-  store i32 7, i1* %1, align 4
-  br label %4
-
-4:                                                ; preds = %3, %2
+4:                                                ; preds = %3
+  store i32 10, i32* %2, align 4
   ret void
 }

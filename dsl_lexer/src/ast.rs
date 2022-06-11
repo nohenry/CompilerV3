@@ -1,81 +1,8 @@
-use std::fmt::{self, Display};
+use std::fmt::Display;
 
 use crate::{default_range, OperatorKind, Range, Token, TokenKind};
 use colored::{ColoredString, Colorize};
-use dsl_util::cast;
-
-pub struct Fmt<F>(pub F)
-where
-    F: Fn(&mut fmt::Formatter) -> fmt::Result;
-
-impl<F> fmt::Display for Fmt<F>
-where
-    F: Fn(&mut fmt::Formatter) -> fmt::Result,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (self.0)(f)
-    }
-}
-
-pub trait AstIndexable: Display {
-    fn num_children(&self) -> usize;
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable>;
-    fn child_at_bx<'a>(&'a self, _index: usize) -> Box<dyn AstIndexable + 'a> {
-        panic!("This type doesn't used box values!")
-    }
-
-    fn write(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        index: u32,
-        indent: &String,
-        last: bool,
-    ) -> std::fmt::Result {
-        write!(f, "{}", indent)?;
-        if index != 0 {
-            write!(f, "{}", if last { "└──" } else { "├──" })?;
-        }
-        let nindent = format!(
-            "{}{}",
-            indent,
-            if index == 0 {
-                ""
-            } else if last {
-                "    "
-            } else {
-                "│   "
-            }
-        );
-        write!(f, "{}\n", self)?;
-
-        let n = self.num_children();
-        for i in 0..n {
-            let child = self.child_at(i);
-            if let Some(child) = child {
-                child.write(
-                    f,
-                    (i + 1).try_into().unwrap(),
-                    &nindent,
-                    if i == n - 1 { true } else { false },
-                )?;
-            } else {
-                let child = self.child_at_bx(i);
-                child.write(
-                    f,
-                    (i + 1).try_into().unwrap(),
-                    &nindent,
-                    if i == n - 1 { true } else { false },
-                )?;
-            }
-        }
-
-        write!(f, "")
-    }
-
-    fn format(&self) -> String {
-        format!("{}", Fmt(|f| self.write(f, 0, &String::from(""), false)))
-    }
-}
+use dsl_util::{cast, TreeDisplay, Grouper, CreateParentBx, CreateParent};
 
 impl Loop {
     pub fn get_range(&self) -> Range {
@@ -105,12 +32,12 @@ impl Display for BinaryExpression {
     }
 }
 
-impl AstIndexable for BinaryExpression {
+impl TreeDisplay for BinaryExpression {
     fn num_children(&self) -> usize {
         2
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.left,
             1 => &*self.right,
@@ -137,12 +64,12 @@ impl Display for UnaryExpression {
     }
 }
 
-impl AstIndexable for UnaryExpression {
+impl TreeDisplay for UnaryExpression {
     fn num_children(&self) -> usize {
         1
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.expression,
             _ => panic!(),
@@ -168,7 +95,7 @@ impl Display for IfExpression {
     }
 }
 
-impl AstIndexable for IfExpression {
+impl TreeDisplay for IfExpression {
     fn num_children(&self) -> usize {
         if let Some(_) = self.else_clause {
             3
@@ -177,7 +104,7 @@ impl AstIndexable for IfExpression {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.condition,
             1 => &*self.body,
@@ -201,12 +128,12 @@ impl Display for FunctionCall {
     }
 }
 
-impl AstIndexable for FunctionCall {
+impl TreeDisplay for FunctionCall {
     fn num_children(&self) -> usize {
         1 + self.arguments.len()
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.expression_to_call,
             _ => &self.arguments[index],
@@ -227,12 +154,12 @@ impl Display for IndexExpression {
     }
 }
 
-impl AstIndexable for IndexExpression {
+impl TreeDisplay for IndexExpression {
     fn num_children(&self) -> usize {
         2
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.index_expression,
             1 => &*self.index_value,
@@ -266,7 +193,7 @@ impl Display for LoopExpression {
     }
 }
 
-impl AstIndexable for LoopExpression {
+impl TreeDisplay for LoopExpression {
     fn num_children(&self) -> usize {
         match &self.loop_type {
             Loop::Infinite(_) => 1,
@@ -274,7 +201,7 @@ impl AstIndexable for LoopExpression {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match &self.loop_type {
             Loop::Infinite(b) => &**b,
             Loop::Until(b, p) => match index {
@@ -337,7 +264,7 @@ impl Display for Expression {
     }
 }
 
-impl AstIndexable for Expression {
+impl TreeDisplay for Expression {
     fn num_children(&self) -> usize {
         match self {
             Expression::Identifier(_) => 0,
@@ -354,7 +281,7 @@ impl AstIndexable for Expression {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match self {
             Expression::Literal(l) => l.child_at(index),
             Expression::BinaryExpression(l) => l.child_at(index),
@@ -369,7 +296,7 @@ impl AstIndexable for Expression {
         }
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn TreeDisplay + 'a)> {
         match self {
             Expression::Literal(l) => l.child_at_bx(index),
             Expression::BinaryExpression(l) => l.child_at_bx(index),
@@ -414,12 +341,12 @@ impl Display for FunctionSignature {
     }
 }
 
-impl AstIndexable for FunctionSignature {
+impl TreeDisplay for FunctionSignature {
     fn num_children(&self) -> usize {
         2
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => None,
             1 => Some(&*self.return_type),
@@ -427,7 +354,7 @@ impl AstIndexable for FunctionSignature {
         }
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn TreeDisplay + 'a)> {
         match index {
             0 => Box::new(CreateParentBx(
                 ColoredString::from("Parameters").green().to_string(),
@@ -443,7 +370,7 @@ impl AstIndexable for FunctionSignature {
                                 cast!(&symbol.token_type, TokenKind::Ident),
                                 symbol_type
                             ));
-                            let b: Box<dyn AstIndexable> = Box::new(grp);
+                            let b: Box<dyn TreeDisplay> = Box::new(grp);
                             b
                         },
                     )
@@ -468,12 +395,12 @@ impl Display for FunctionType {
     }
 }
 
-impl AstIndexable for FunctionType {
+impl TreeDisplay for FunctionType {
     fn num_children(&self) -> usize {
         2
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => None,
             1 => Some(&*self.return_type),
@@ -481,14 +408,14 @@ impl AstIndexable for FunctionType {
         }
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn TreeDisplay + 'a)> {
         match index {
             0 => Box::new(CreateParent(
                 ColoredString::from("Parameters").green().to_string(),
                 self.parameters
                     .iter()
                     .map(|f| {
-                        let b: &dyn AstIndexable = f;
+                        let b: &dyn TreeDisplay = f;
                         b
                     })
                     .collect(),
@@ -609,12 +536,12 @@ impl Display for Type {
     }
 }
 
-impl AstIndexable for Type {
+impl TreeDisplay for Type {
     fn num_children(&self) -> usize {
         0
     }
 
-    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, _index: usize) -> Option<&dyn TreeDisplay> {
         panic!()
     }
 }
@@ -661,7 +588,7 @@ impl Display for VariableDecleration {
     }
 }
 
-impl AstIndexable for VariableDecleration {
+impl TreeDisplay for VariableDecleration {
     fn num_children(&self) -> usize {
         (if self.variable_type.is_some() { 1 } else { 0 })
             + (if self.possible_initializer.is_some() {
@@ -671,7 +598,7 @@ impl AstIndexable for VariableDecleration {
             })
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => {
                 if let Some(ref ty) = self.variable_type {
@@ -714,7 +641,7 @@ impl Display for FunctionDecleration {
     }
 }
 
-impl AstIndexable for FunctionDecleration {
+impl TreeDisplay for FunctionDecleration {
     fn num_children(&self) -> usize {
         if self.generic.is_some() {
             3
@@ -723,7 +650,7 @@ impl AstIndexable for FunctionDecleration {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => Some(&self.function_type),
             1 => Some(&*self.body),
@@ -753,7 +680,7 @@ impl Display for TemplateDecleration {
     }
 }
 
-impl AstIndexable for TemplateDecleration {
+impl TreeDisplay for TemplateDecleration {
     fn num_children(&self) -> usize {
         if self.generic.is_some() {
             2
@@ -762,7 +689,7 @@ impl AstIndexable for TemplateDecleration {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => None,
             1 => Some(&**self.generic.as_ref().unwrap()),
@@ -770,7 +697,7 @@ impl AstIndexable for TemplateDecleration {
         }
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn TreeDisplay + 'a)> {
         match index {
             0 => Box::new(CreateParentBx(
                 ColoredString::from("Parameters").green().to_string(),
@@ -786,7 +713,7 @@ impl AstIndexable for TemplateDecleration {
                                 cast!(&symbol.token_type, TokenKind::Ident),
                                 symbol_type
                             ));
-                            let b: Box<dyn AstIndexable> = Box::new(grp);
+                            let b: Box<dyn TreeDisplay> = Box::new(grp);
                             b
                         },
                     )
@@ -849,7 +776,7 @@ impl Display for ActionDecleration {
     }
 }
 
-impl AstIndexable for ActionDecleration {
+impl TreeDisplay for ActionDecleration {
     fn num_children(&self) -> usize {
         if self.generic.is_some() {
             2
@@ -858,7 +785,7 @@ impl AstIndexable for ActionDecleration {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => {
                 if let Some(generic) = &self.generic {
@@ -893,7 +820,7 @@ impl Display for SpecDecleration {
     }
 }
 
-impl AstIndexable for SpecDecleration {
+impl TreeDisplay for SpecDecleration {
     fn num_children(&self) -> usize {
         if self.generic.is_some() {
             1 + self.body.len()
@@ -902,7 +829,7 @@ impl AstIndexable for SpecDecleration {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match index {
             0 => {
                 if let Some(generic) = &self.generic {
@@ -932,14 +859,14 @@ impl Display for SpecBody {
     }
 }
 
-impl AstIndexable for SpecBody {
+impl TreeDisplay for SpecBody {
     fn num_children(&self) -> usize {
         match self {
             Self::Function(_, _) => 1,
         }
     }
 
-    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, _index: usize) -> Option<&dyn TreeDisplay> {
         match self {
             Self::Function(_, fnb) => Some(fnb),
         }
@@ -965,23 +892,23 @@ impl Display for GenericParameters {
     }
 }
 
-impl AstIndexable for GenericParameters {
+impl TreeDisplay for GenericParameters {
     fn num_children(&self) -> usize {
         self.parameters.len()
     }
 
-    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, _index: usize) -> Option<&dyn TreeDisplay> {
         None
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn AstIndexable + 'a> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn TreeDisplay + 'a> {
         let (child_name, restraints) = &self.parameters[index];
         if let Some(res) = &restraints {
             Box::new(CreateParent(
                 cast!(&child_name.token_type, TokenKind::Ident).clone(),
                 res.iter()
                     .map(|f| {
-                        let b: &dyn AstIndexable = f;
+                        let b: &dyn TreeDisplay = f;
                         b
                     })
                     .collect(),
@@ -1007,12 +934,12 @@ impl Display for ImportDecleration {
     }
 }
 
-impl AstIndexable for ImportDecleration {
+impl TreeDisplay for ImportDecleration {
     fn num_children(&self) -> usize {
         self.path.len()
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(&self.path[index])
     }
 }
@@ -1086,7 +1013,7 @@ impl Display for ParseNode {
     }
 }
 
-impl AstIndexable for ParseNode {
+impl TreeDisplay for ParseNode {
     fn num_children(&self) -> usize {
         match self {
             ParseNode::Expression(i, _) => i.num_children(),
@@ -1105,7 +1032,7 @@ impl AstIndexable for ParseNode {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match self {
             ParseNode::Expression(i, _) => i.child_at(index),
             ParseNode::VariableDecleration(i) => i.child_at(index),
@@ -1129,7 +1056,7 @@ impl AstIndexable for ParseNode {
         }
     }
 
-    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn AstIndexable + 'a)> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<(dyn TreeDisplay + 'a)> {
         match self {
             ParseNode::Expression(i, _) => i.child_at_bx(index),
             ParseNode::VariableDecleration(i) => i.child_at_bx(index),
@@ -1156,12 +1083,12 @@ impl Display for ArrayInitializer {
     }
 }
 
-impl AstIndexable for ArrayInitializer {
+impl TreeDisplay for ArrayInitializer {
     fn num_children(&self) -> usize {
         self.elements.len()
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(&self.elements[index])
     }
 }
@@ -1179,7 +1106,7 @@ impl Display for TemplateInitializer {
     }
 }
 
-impl AstIndexable for TemplateInitializer {
+impl TreeDisplay for TemplateInitializer {
     fn num_children(&self) -> usize {
         if let Some(_) = &self.named_type {
             self.initializer_values.len() + 2
@@ -1188,11 +1115,11 @@ impl AstIndexable for TemplateInitializer {
         }
     }
 
-    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, _index: usize) -> Option<&dyn TreeDisplay> {
         None
     }
 
-    fn child_at_bx(&self, index: usize) -> Box<dyn AstIndexable> {
+    fn child_at_bx(&self, index: usize) -> Box<dyn TreeDisplay> {
         // self.initializer_values[index].1.as_ref().unwrap()
         // &Grouper("Pod".to_string())
         if let Some(ty) = &self.named_type {
@@ -1300,7 +1227,7 @@ impl Display for Literal {
     }
 }
 
-impl AstIndexable for Literal {
+impl TreeDisplay for Literal {
     fn num_children(&self) -> usize {
         match self {
             Literal::Array(b) => b.num_children(),
@@ -1309,7 +1236,7 @@ impl AstIndexable for Literal {
         }
     }
 
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
+    fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         match self {
             Literal::Array(b) => b.child_at(index),
             Literal::StructInitializer(b) => b.child_at(index),
@@ -1318,56 +1245,4 @@ impl AstIndexable for Literal {
     }
 }
 
-struct Grouper(String);
 
-impl Display for Grouper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl AstIndexable for Grouper {
-    fn num_children(&self) -> usize {
-        0
-    }
-
-    fn child_at(&self, _index: usize) -> Option<&dyn AstIndexable> {
-        panic!()
-    }
-}
-
-struct CreateParent<'a>(String, Vec<&'a dyn AstIndexable>);
-
-impl Display for CreateParent<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl AstIndexable for CreateParent<'_> {
-    fn num_children(&self) -> usize {
-        self.1.len()
-    }
-
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
-        Some(self.1[index])
-    }
-}
-
-struct CreateParentBx(String, Vec<Box<dyn AstIndexable>>);
-
-impl Display for CreateParentBx {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl AstIndexable for CreateParentBx {
-    fn num_children(&self) -> usize {
-        self.1.len()
-    }
-
-    fn child_at(&self, index: usize) -> Option<&dyn AstIndexable> {
-        Some(&*self.1[index])
-    }
-}

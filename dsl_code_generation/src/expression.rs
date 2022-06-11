@@ -1,5 +1,3 @@
-use std::ffi::{CStr, CString};
-
 use dsl_errors::go;
 use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
@@ -8,10 +6,10 @@ use dsl_lexer::ast::{
     UnaryExpression,
 };
 use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::{c_str, cast, NULL_STR};
+use dsl_util::{cast, NULL_STR};
 use llvm_sys::core::{
     LLVMAppendBasicBlock, LLVMAppendExistingBasicBlock, LLVMCreateBasicBlockInContext,
-    LLVMGetGlobalContext, LLVMGetMDKindID, LLVMMDString, LLVMSetMetadata,
+    LLVMGetGlobalContext,
 };
 
 use super::module::Module;
@@ -241,7 +239,7 @@ impl Module {
                 let str = cast!(&i.token_type, TokenKind::Ident);
 
                 let sym = self.symbol_root.borrow();
-                let sym = self.find_up_chain(&sym, &self.current_symbol, str);
+                let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), str);
 
                 match &sym.unwrap().value {
                     SymbolValue::Variable(v) => v.clone(),
@@ -289,12 +287,6 @@ impl Module {
 
                     self.builder.set_position_end(if_body);
                     let if_ret = self.gen_parse_node(&body);
-                    match *self.current_storage.borrow() {
-                        Value::Empty => (),
-                        ref r => {
-                            go!(self, self.builder.create_store(r, &if_ret), Value);
-                        }
-                    };
 
                     go!(self, self.builder.create_branch(end), Value);
 
@@ -307,12 +299,6 @@ impl Module {
 
                     self.builder.set_position_end(else_body);
                     let else_ret = self.gen_parse_node(&ec);
-                    match *self.current_storage.borrow() {
-                        Value::Empty => (),
-                        ref r => {
-                            go!(self, self.builder.create_store(r, &else_ret), Value);
-                        }
-                    };
 
                     if empty {
                         unsafe {
@@ -328,6 +314,20 @@ impl Module {
 
                     if empty {
                         self.jump_point.replace(Value::Empty);
+                    }
+
+                    match (&if_ret, &else_ret) {
+                        (Value::Empty, Value::Empty) => (),
+                        (Value::Empty, _) => (),
+                        (_, Value::Empty) => (),
+                        (a, b) => {
+                            let p = go!(
+                                self,
+                                self.builder.create_phi(a, b, if_body, else_body),
+                                Value
+                            );
+                            return p;
+                        }
                     }
                 } else {
                     // TODO: remove ffi function
