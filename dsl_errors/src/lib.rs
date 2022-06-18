@@ -41,7 +41,7 @@ pub struct CodeGenError {
 }
 
 #[macro_export]
-macro_rules! go {
+macro_rules! check {
     ($self:ident,$e:expr,$empty:ident) => {
         match $e {
             Ok(t) => t,
@@ -51,11 +51,12 @@ macro_rules! go {
             }
         }
     };
-    ($e:expr) => {
-        if $e.is_empty() {
+    ($e:expr) => {{
+        let e = $e;
+        if e.is_empty() {
             return Value::Empty;
         } else {
-            $e
+            e
         }
-    };
+    }};
 }

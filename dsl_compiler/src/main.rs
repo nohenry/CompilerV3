@@ -111,7 +111,7 @@ fn emit(
                 .expect("Unable to emit object file");
             }
             EmitType::Bitcode => {
-                llvm_bool(|error| LLVMWriteBitcodeToFile(module, output_file.as_ptr() as *mut i8))
+                llvm_bool(|_error| LLVMWriteBitcodeToFile(module, output_file.as_ptr() as *mut i8))
                     .expect("Unable to emit bitcode");
             }
             EmitType::IR => {
@@ -159,7 +159,7 @@ fn main() {
         let module = LLVMModuleCreateWithName(name.as_ptr());
         let name = name.into_string().unwrap();
 
-        let module =
+        let mut module =
             dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
 
         module.gen();

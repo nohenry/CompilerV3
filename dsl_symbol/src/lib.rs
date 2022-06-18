@@ -1,9 +1,13 @@
 use std::{collections::HashMap, fmt::Display};
 
-use dsl_util::{CreateParent, TreeDisplay};
+use dsl_util::{CreateParent, TreeDisplay, NULL_STR};
+use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
-    core::LLVMVoidType,
-    prelude::{LLVMBasicBlockRef, LLVMTypeRef, LLVMValueRef},
+    core::{
+        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMInt1Type, LLVMInt32Type, LLVMInt8Type,
+        LLVMPointerType, LLVMVoidType,
+    },
+    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMTypeRef, LLVMValueRef},
 };
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,71 @@ impl Value {
             _ => false,
         }
     }
+
+    pub fn has_value(&self) -> bool {
+        match self {
+            Value::Empty | Value::Instruction { .. } | Value::Block { .. } => false,
+            _ => true,
+        }
+    }
+
+    pub fn get_value(&self, builder: LLVMBuilderRef) -> Result<LLVMValueRef, ()> {
+        match self {
+            Value::Empty | Value::Instruction { .. } | Value::Block { .. } => Err(()),
+            Value::Function { llvm_value, .. } => Ok(*llvm_value),
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => unsafe {
+                Ok(LLVMBuildLoad2(
+                    builder,
+                    variable_type.get_type(),
+                    *llvm_value,
+                    NULL_STR,
+                ))
+            },
+            Value::Literal { llvm_value, .. } => Ok(*llvm_value),
+            Value::Load { llvm_value, .. } => Ok(*llvm_value),
+        }
+    }
+
+    pub fn weak_cast(&self, to_type: &Type, builder: LLVMBuilderRef) -> Result<Value, bool> {
+        if self.get_type() == to_type {
+            return Err(false);
+        }
+        match (self, to_type) {
+            (
+                Value::Literal {
+                    llvm_value,
+                    literal_type:
+                        Type::Integer {
+                            llvm_type: ltype, ..
+                        },
+                },
+                Type::Integer {
+                    llvm_type: rtype,
+                    signed,
+                },
+            ) => {
+                if *ltype != *rtype {
+                    return Ok(Value::Literal {
+                        llvm_value: unsafe {
+                            LLVMBuildIntCast2(
+                                builder,
+                                *llvm_value,
+                                *rtype,
+                                if *signed { 1 } else { 0 },
+                                NULL_STR,
+                            )
+                        },
+                        literal_type: to_type.clone(),
+                    });
+                }
+            }
+            _ => (),
+        }
+        Err(true)
+    }
 }
 
 impl Display for Value {
@@ -97,7 +166,7 @@ impl TreeDisplay for Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Empty,
     Unit {
@@ -113,6 +182,13 @@ pub enum Type {
     Boolean {
         llvm_type: LLVMTypeRef,
     },
+    Char {
+        llvm_type: LLVMTypeRef,
+    },
+    String {
+        llvm_type: LLVMTypeRef,
+        length: usize,
+    },
     Array {
         llvm_type: LLVMTypeRef,
         base_type: Box<Type>,
@@ -123,7 +199,7 @@ pub enum Type {
     },
     Function {
         llvm_type: LLVMTypeRef,
-        parameters: HashMap<String, Type>,
+        parameters: LinkedHashMap<String, Type>,
         return_type: Box<Type>,
     },
 }
@@ -141,10 +217,12 @@ impl Type {
             Self::Integer { llvm_type, .. } => *llvm_type,
             Self::Float { llvm_type, .. } => *llvm_type,
             Self::Boolean { llvm_type, .. } => *llvm_type,
+            Self::Char { llvm_type, .. } => *llvm_type,
+            Self::String { llvm_type, .. } => *llvm_type,
             Self::Array { llvm_type, .. } => *llvm_type,
             Self::Unit { llvm_type, .. } => *llvm_type,
             Self::Reference { llvm_type, .. } => *llvm_type,
-            Self::Function { llvm_type, .. } => *llvm_type,
+            Self::Function { llvm_type, .. } => unsafe { LLVMPointerType(*llvm_type, 0) },
             Self::Empty => panic!("Called on unkown value!"),
         }
     }
@@ -163,6 +241,8 @@ impl Display for Type {
             Type::Unit { .. } => write!(f, "Unit"),
             Type::Integer { signed, .. } if !signed => write!(f, "Integer (unsigned)"),
             Type::Integer { .. } => write!(f, "Integer (signed)"),
+            Type::Char { .. } => write!(f, "Char"),
+            Type::String { .. } => write!(f, "String"),
             Type::Float { .. } => write!(f, "Float"),
             Type::Boolean { .. } => write!(f, "Boolean"),
             Type::Array { .. } => write!(f, "Array"),
@@ -199,6 +279,110 @@ impl TreeDisplay for Type {
                 vec![parameters.values().nth(index - 1).unwrap()],
             )),
             _ => panic!(),
+        }
+    }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Unit {
+                    llvm_type: l_llvm_type,
+                },
+                Self::Unit {
+                    llvm_type: r_llvm_type,
+                },
+            ) => l_llvm_type == r_llvm_type,
+            (
+                Self::Integer {
+                    llvm_type: l_llvm_type,
+                    signed: l_signed,
+                },
+                Self::Integer {
+                    llvm_type: r_llvm_type,
+                    signed: r_signed,
+                },
+            ) => l_llvm_type == r_llvm_type && l_signed == r_signed,
+            (
+                Self::Float {
+                    llvm_type: l_llvm_type,
+                },
+                Self::Float {
+                    llvm_type: r_llvm_type,
+                },
+            ) => l_llvm_type == r_llvm_type,
+            (
+                Self::Boolean {
+                    llvm_type: l_llvm_type,
+                },
+                Self::Boolean {
+                    llvm_type: r_llvm_type,
+                },
+            ) => l_llvm_type == r_llvm_type,
+            (
+                Self::Char {
+                    llvm_type: l_llvm_type,
+                },
+                Self::Char {
+                    llvm_type: r_llvm_type,
+                },
+            ) => l_llvm_type == r_llvm_type,
+            (
+                Self::String {
+                    llvm_type: l_llvm_type,
+                    length: l_length,
+                },
+                Self::String {
+                    llvm_type: r_llvm_type,
+                    length: r_length,
+                },
+            ) => l_llvm_type == r_llvm_type && l_length == r_length,
+            (
+                Self::Array {
+                    llvm_type: l_llvm_type,
+                    base_type: l_base_type,
+                },
+                Self::Array {
+                    llvm_type: r_llvm_type,
+                    base_type: r_base_type,
+                },
+            ) => l_llvm_type == r_llvm_type && l_base_type == r_base_type,
+            (
+                Self::Reference {
+                    llvm_type: l_llvm_type,
+                    base_type: l_base_type,
+                },
+                Self::Reference {
+                    llvm_type: r_llvm_type,
+                    base_type: r_base_type,
+                },
+            ) => l_llvm_type == r_llvm_type && l_base_type == r_base_type,
+            (
+                Self::Function {
+                    llvm_type: l_llvm_type,
+                    parameters: l_parameters,
+                    return_type: l_return_type,
+                },
+                Self::Function {
+                    llvm_type: r_llvm_type,
+                    parameters: r_parameters,
+                    return_type: r_return_type,
+                },
+            ) => {
+                for p in r_parameters.values().zip(l_parameters.values()) {
+                    if p.0 != p.1 {
+                        return false
+                    }
+                }
+
+                if l_return_type != r_return_type {
+                    return false
+                }
+                
+                true
+            }
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
 }

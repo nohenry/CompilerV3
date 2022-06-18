@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 dsl_util = {path = "../dsl_util"}
 llvm-sys = {path = "../llvm-sys"}
+linked-hash-map = "0.5.4"

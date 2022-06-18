@@ -1,6 +1,11 @@
 
+int value() {
+    return 4;
+}
+
+int p[] = {5, 6, 7};
+
 int main(int argc)
 {
-    int x = argc == 4 ? 6 : 8;
-    
+    int *c = "Ptoato";
 }

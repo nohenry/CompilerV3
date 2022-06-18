@@ -2,27 +2,29 @@ use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 use colored::{ColoredString, Colorize};
 use dsl_llvm::IRBuilder;
-use llvm_sys::{
-    core::LLVMCreateBuilder,
-    prelude::{LLVMBasicBlockRef, LLVMModuleRef, LLVMValueRef},
-};
+use llvm_sys::{core::LLVMCreateBuilder, prelude::LLVMModuleRef};
 
 use dsl_lexer::ast::ParseNode;
 
 use dsl_errors::CodeGenError;
 use dsl_symbol::{Symbol, SymbolValue, Value};
 
+pub enum CodeGenPass {
+    Symbols,
+    Values,
+}
+
 pub struct Module {
     pub(super) ast: Box<ParseNode>,
     pub(super) module: LLVMModuleRef,
-    pub(super) current_block: Rc<RefCell<LLVMBasicBlockRef>>,
-    pub(super) current_function: Rc<RefCell<LLVMValueRef>>,
-    pub(super) current_storage: Rc<RefCell<Value>>,
+    pub(super) current_block: Rc<RefCell<Value>>,
+    pub(super) current_function: Rc<RefCell<Value>>,
     pub(super) jump_point: Rc<RefCell<Value>>,
     pub(super) builder: IRBuilder,
     pub(super) errors: Rc<RefCell<Vec<CodeGenError>>>,
     pub(super) symbol_root: Rc<RefCell<Symbol>>,
     pub(super) current_symbol: Rc<RefCell<Vec<String>>>,
+    pub(super) code_gen_pass: Rc<RefCell<CodeGenPass>>,
 }
 
 impl Debug for Module {
@@ -47,14 +49,14 @@ impl Module {
         Module {
             ast,
             module,
-            current_block: Rc::new(RefCell::new(std::ptr::null_mut())),
-            current_function: Rc::new(RefCell::new(std::ptr::null_mut())),
-            current_storage: Rc::new(RefCell::new(Value::Empty)),
+            current_block: Rc::new(RefCell::new(Value::Empty)),
+            current_function: Rc::new(RefCell::new(Value::Empty)),
             jump_point: Rc::new(RefCell::new(Value::Empty)),
             builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,
             current_symbol: Rc::new(RefCell::new(vec![name.clone()])),
+            code_gen_pass: Rc::new(RefCell::new(CodeGenPass::Symbols)),
         }
     }
 
@@ -63,8 +65,11 @@ impl Module {
     }
 
     pub fn gen(&self) {
-        let s = self.ast.clone();
-        self.gen_parse_node(&s);
+
+        self.gen_parse_node(&self.ast);
+        self.code_gen_pass.replace(CodeGenPass::Values);
+        self.gen_parse_node(&self.ast);
+
         for err in self.errors.borrow().iter() {
             println!(
                 "{}: {}",
@@ -117,6 +122,23 @@ impl Module {
         }
 
         self.current_symbol.borrow_mut().push(name.clone())
+    }
+
+    pub fn add_symbol(&self, name: &String, sym: SymbolValue) {
+        let mut cur_sym = self.symbol_root.borrow_mut();
+        let current = self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+        if let Some(c) = current {
+            c.add_child(name, sym);
+        }
+    }
+
+    pub fn pop_symbol(&self) {
+        let new = match &*self.current_symbol.borrow().as_slice() {
+            [vals @ .., _] => Vec::from(vals),
+            _ => Vec::new(),
+        };
+        self.current_symbol.replace(new);
     }
 
     pub fn get_current(&self, f: impl Fn(Option<&Symbol>)) {

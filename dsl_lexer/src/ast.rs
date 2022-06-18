@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::{default_range, OperatorKind, Range, Token, TokenKind};
 use colored::{ColoredString, Colorize};
-use dsl_util::{cast, TreeDisplay, Grouper, CreateParentBx, CreateParent};
+use dsl_util::{cast, CreateParent, CreateParentBx, Grouper, TreeDisplay};
 
 impl Loop {
     pub fn get_range(&self) -> Range {
@@ -136,7 +136,7 @@ impl TreeDisplay for FunctionCall {
     fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
         Some(match index {
             0 => &*self.expression_to_call,
-            _ => &self.arguments[index],
+            _ => &self.arguments[index - 1],
         })
     }
 }
@@ -1119,7 +1119,7 @@ impl TreeDisplay for TemplateInitializer {
         None
     }
 
-    fn child_at_bx(&self, index: usize) -> Box<dyn TreeDisplay> {
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn TreeDisplay + 'a> {
         // self.initializer_values[index].1.as_ref().unwrap()
         // &Grouper("Pod".to_string())
         if let Some(ty) = &self.named_type {
@@ -1141,7 +1141,7 @@ impl TreeDisplay for TemplateInitializer {
                             ColoredString::from(format!("{}", name).as_str())
                                 .green()
                                 .to_string(),
-                            vec![],
+                            vec![value],
                         ))
                     } else {
                         Box::new(Grouper(
@@ -1152,8 +1152,6 @@ impl TreeDisplay for TemplateInitializer {
                     }
                 }
             }
-
-            // self.initializer_values.len() + 2
         } else {
             let (name, value) = &self.initializer_values[index];
             if let Some(value) = value {
@@ -1161,7 +1159,7 @@ impl TreeDisplay for TemplateInitializer {
                     ColoredString::from(format!("{}", name).as_str())
                         .green()
                         .to_string(),
-                    vec![],
+                    vec![value],
                 ))
             } else {
                 Box::new(Grouper(
@@ -1221,7 +1219,11 @@ impl Display for Literal {
             ),
             Literal::Array(b) => write!(f, "{}", b),
             Literal::StructInitializer(b) => write!(f, "{}", b),
-            Literal::String(b, _) => write!(f, "String \"{}\"", b),
+            Literal::String(b, _) => write!(
+                f,
+                "String {}",
+                ColoredString::from(format!("'{}'", b).as_str()).yellow()
+            ),
             Literal::Empty => write!(f, "Empty"),
         }
     }
@@ -1244,5 +1246,3 @@ impl TreeDisplay for Literal {
         }
     }
 }
-
-

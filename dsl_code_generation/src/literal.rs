@@ -1,12 +1,12 @@
 use llvm_sys::core::{
-    LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMFloatType, LLVMInt1Type,
-    LLVMInt32Type,
+    LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMConstString, LLVMFloatType,
+    LLVMInt1Type, LLVMInt32Type,
 };
 
 use dsl_lexer::ast::{ArrayInitializer, Literal};
 
-use super::{module::Module};
-use dsl_symbol::{ Type, Value};
+use super::module::Module;
+use dsl_symbol::{Type, Value};
 
 impl Module {
     pub(super) fn gen_literal(&self, literal: &Literal) -> Value {
@@ -79,6 +79,17 @@ impl Module {
                     },
                 }
             }
+            Literal::String(s, _) => Value::Literal {
+                llvm_value: unsafe {
+                    LLVMConstString(s.as_ptr() as *const _, s.len().try_into().unwrap(), 0)
+                },
+                literal_type: Type::String {
+                    llvm_type: unsafe {
+                        LLVMArrayType(LLVMInt1Type(), s.len().try_into().unwrap())
+                    },
+                    length: s.len(),
+                },
+            },
             _ => {
                 self.add_error(String::from("Unsupported literal"));
                 Value::Empty

@@ -87,6 +87,7 @@ dependencies = [
  "dsl_parser",
  "dsl_symbol",
  "dsl_util",
+ "linked-hash-map",
  "llvm-sys",
 ]
 
@@ -128,6 +129,7 @@ dependencies = [
  "dsl_errors",
  "dsl_symbol",
  "dsl_util",
+ "linked-hash-map",
  "llvm-sys",
 ]
 
@@ -153,6 +155,7 @@ name = "dsl_symbol"
 version = "0.1.0"
 dependencies = [
  "dsl_util",
+ "linked-hash-map",
  "llvm-sys",
 ]
 
@@ -211,6 +214,12 @@ name = "libc"
 version = "0.2.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f98a04dce437184842841303488f70d0188c5f51437d2a834dc097eafa909a01"
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fb9b38af92608140b86b693604b9ffcc5824240a484d1ecd4795bacb2fe88f3"
 
 [[package]]
 name = "llvm-sys"

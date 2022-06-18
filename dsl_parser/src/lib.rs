@@ -402,7 +402,7 @@ fn parse_function(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> 
                 ..
             }),
         ..
-    }) = tokens.peek_next()
+    }) = tokens.current()
     {
         Some(Box::new(parse_generic(tokens)?))
     } else {
@@ -441,7 +441,7 @@ fn parse_function_type(
             };
             params.push(ts);
 
-            match tokens.peek_next() {
+            match tokens.current() {
                 Some(t) => match t.token_type {
                     TokenKind::Comma => tokens.move_next(),
                     TokenKind::CloseParen => (),
@@ -466,8 +466,10 @@ fn parse_function_type(
         {
             break;
         }
-        let parameter_type = parse_type(tokens)?;
         let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
+        expect(tokens, TokenKind::Colon)?;
+        let parameter_type = parse_type(tokens)?;
+
         let ts = TypeSymbol {
             symbol_type: parameter_type,
             symbol: identifier.clone(),
@@ -809,7 +811,7 @@ fn parse_variable_decleration(tokens: &mut Cursor<&Token>) -> Result<ParseNode, 
     let keyword = expect(tokens, Keyword::create_expect(KeywordKind::Let))?;
     let identifier = expect(tokens, TokenKind::Ident("".to_string()))?;
 
-    let var_type = match tokens.peek_next() {
+    let var_type = match tokens.current() {
         Some(Token {
             token_type: TokenKind::Colon,
             ..
@@ -1200,13 +1202,13 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                 TokenKind::Keyword(k) => {
                     tokens.move_next();
                     match k.keyword {
-                        KeywordKind::Int => Ok(Type::Int(8, t.range)),
+                        KeywordKind::Int => Ok(Type::Int(32, t.range)),
                         KeywordKind::Int8 => Ok(Type::Int(8, t.range)),
                         KeywordKind::Int16 => Ok(Type::Int(16, t.range)),
                         KeywordKind::Int32 => Ok(Type::Int(32, t.range)),
                         KeywordKind::Int64 => Ok(Type::Int(64, t.range)),
                         KeywordKind::Int128 => Ok(Type::Int(128, t.range)),
-                        KeywordKind::Uint => Ok(Type::Uint(8, t.range)),
+                        KeywordKind::Uint => Ok(Type::Uint(32, t.range)),
                         KeywordKind::Uint8 => Ok(Type::Uint(8, t.range)),
                         KeywordKind::Uint16 => Ok(Type::Uint(16, t.range)),
                         KeywordKind::Uint32 => Ok(Type::Uint(32, t.range)),
@@ -1265,18 +1267,17 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                         if let Some(Token {
                             token_type: TokenKind::CloseParen,
                             ..
-                        }) = tokens.peek_next()
+                        }) = tokens.current()
                         {
                             break;
                         }
                         let parameter_type = parse_type(tokens)?;
                         parameters.push(parameter_type);
 
-                        match tokens.peek_next() {
+                        match tokens.current() {
                             Some(t) => match t.token_type {
                                 TokenKind::Comma => tokens.move_next(),
                                 TokenKind::CloseParen => {
-                                    tokens.move_next();
                                     break;
                                 }
                                 _ => {
@@ -1296,7 +1297,7 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                                 ..
                             }),
                         ..
-                    }) = tokens.peek_next()
+                    }) = tokens.current()
                     {
                         tokens.move_next();
                         parse_type(tokens)?

@@ -14,3 +14,4 @@ dsl_errors= {path = "../dsl_errors"}
 dsl_llvm = {path = "../dsl_llvm"}
 llvm-sys = {path ="../llvm-sys"}
 colored = "2"
+linked-hash-map = "0.5.4"

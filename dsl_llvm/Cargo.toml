@@ -12,3 +12,4 @@ dsl_symbol = {path = "../dsl_symbol"}
 dsl_errors = {path = "../dsl_errors"}
 dsl_util = {path = "../dsl_util"}
 conv = "0.3.3"
+linked-hash-map = "0.5.4"

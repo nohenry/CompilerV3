@@ -1,16 +1,12 @@
-use dsl_errors::go;
+use dsl_errors::check;
 use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
-    BinaryExpression, Expression, IfExpression, IndexExpression, Loop, LoopExpression,
-    UnaryExpression,
+    BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
+    LoopExpression, UnaryExpression,
 };
 use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::{cast, NULL_STR};
-use llvm_sys::core::{
-    LLVMAppendBasicBlock, LLVMAppendExistingBasicBlock, LLVMCreateBasicBlockInContext,
-    LLVMGetGlobalContext,
-};
+use dsl_util::cast;
 
 use super::module::Module;
 use dsl_symbol::{SymbolValue, Type, Value};
@@ -30,7 +26,7 @@ impl Module {
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
 
-                        go!(self, self.builder.create_store(&left, &right), Value);
+                        check!(self, self.builder.create_store(&left, &right), Value);
 
                         return Value::Empty;
                     }
@@ -86,7 +82,7 @@ impl Module {
                                                 return Value::Empty;
                                             }
                                         };
-                                        return go!(
+                                        return check!(
                                             self,
                                             self.builder.create_icompare(&left, &right, func),
                                             Value
@@ -104,7 +100,7 @@ impl Module {
                                                 return Value::Empty;
                                             }
                                         };
-                                        return go!(
+                                        return check!(
                                             self,
                                             self.builder.create_icompare(&left, &right, func),
                                             Value
@@ -121,7 +117,7 @@ impl Module {
                                                 return Value::Empty;
                                             }
                                         };
-                                        return go!(
+                                        return check!(
                                             self,
                                             self.builder.create_fcompare(&left, &right, func),
                                             Value
@@ -141,8 +137,8 @@ impl Module {
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
 
-                        let op = go!(self, self.builder.create_bin_op(&left, &right, oper), Value);
-                        go!(self, self.builder.create_store(&left, &op), Value);
+                        let op = check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
+                        check!(self, self.builder.create_store(&left, &op), Value);
 
                         // load modify and store value for op=
                         return Value::Empty;
@@ -152,7 +148,7 @@ impl Module {
                 let left = self.gen_expression(left);
                 let right = self.gen_expression(right);
 
-                go!(self, self.builder.create_bin_op(&left, &right, func), Value)
+                check!(self, self.builder.create_bin_op(&left, &right, func), Value)
             }
             Expression::UnaryExpression(UnaryExpression {
                 expression,
@@ -162,7 +158,7 @@ impl Module {
                 OperatorKind::Minus => {
                     let expr = self.gen_expression(&expression);
 
-                    go!(self, self.builder.create_neg(&expr), Value)
+                    check!(self, self.builder.create_neg(&expr), Value)
                 }
                 OperatorKind::BitAnd => {
                     let value = self.gen_expression(&expression);
@@ -182,7 +178,7 @@ impl Module {
                     let value = self.gen_expression(&expression);
                     match &value {
                         Value::Variable { .. } => {
-                            let value = go!(self, self.builder.create_load(&value), Value);
+                            let value = check!(self, self.builder.create_load(&value), Value);
 
                             match value {
                                 Value::Literal {
@@ -228,7 +224,7 @@ impl Module {
                 let index0 = self.builder.create_literal(&self.builder.get_uint_64(), 0);
                 let indicies = [index0, right];
 
-                go!(
+                check!(
                     self,
                     self.builder
                         .create_gep_inbound(&left, *base_type, &indicies),
@@ -243,6 +239,7 @@ impl Module {
 
                 match &sym.unwrap().value {
                     SymbolValue::Variable(v) => v.clone(),
+                    SymbolValue::Funtion(v) => v.clone(),
                     _ => panic!("sdf"),
                 }
             }
@@ -255,62 +252,69 @@ impl Module {
             }) => {
                 let condition = self.gen_expression(&condition);
 
-                let if_body = unsafe {
-                    LLVMAppendBasicBlock(self.current_function.borrow().as_mut().unwrap(), NULL_STR)
-                };
+                let if_body = check!(
+                    self,
+                    self.builder.append_block(&self.current_function.borrow()),
+                    Value
+                );
 
                 if let Some((_, ec)) = else_clause {
-                    let else_body =
-                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
+                    let else_body = check!(self, self.builder.create_block(), Value);
 
-                    let (end, empty) = match *self.jump_point.borrow() {
-                        Value::Empty => unsafe {
-                            let end =
-                                LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR);
+                    let (end, empty) = match &*self.jump_point.borrow() {
+                        Value::Empty => {
+                            let end = check!(self, self.builder.create_block(), Value);
                             (end, true)
-                        },
-                        Value::Block { llvm_value } => (llvm_value, false),
+                        }
+                        Value::Block { llvm_value } => (
+                            Value::Block {
+                                llvm_value: *llvm_value,
+                            },
+                            false,
+                        ),
                         _ => {
                             self.add_error("Unable to get basic block".into());
                             return Value::Empty;
                         }
                     };
                     if empty {
-                        self.jump_point.replace(Value::Block { llvm_value: end });
+                        self.jump_point.replace(end.clone());
                     }
 
-                    go!(
+                    check!(
                         self,
-                        self.builder.create_cbranch(&condition, if_body, else_body),
+                        self.builder
+                            .create_cbranch(&condition, &if_body, &else_body),
                         Value
                     );
 
-                    self.builder.set_position_end(if_body);
+                    self.builder.set_position_end(&if_body);
                     let if_ret = self.gen_parse_node(&body);
 
-                    go!(self, self.builder.create_branch(end), Value);
+                    check!(self, self.builder.create_branch(&end), Value);
 
-                    unsafe {
-                        LLVMAppendExistingBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            else_body,
-                        );
-                    }
+                    check!(
+                        self,
+                        self.builder
+                            .append_existing_block(&self.current_function.borrow(), &else_body),
+                        Value
+                    );
 
-                    self.builder.set_position_end(else_body);
+                    self.builder.set_position_end(&else_body);
                     let else_ret = self.gen_parse_node(&ec);
 
                     if empty {
-                        unsafe {
-                            LLVMAppendExistingBasicBlock(
-                                self.current_function.borrow().as_mut().unwrap(),
-                                end,
-                            );
-                        }
+                        check!(
+                            self,
+                            self.builder
+                                .append_existing_block(&self.current_function.borrow(), &end),
+                            Value
+                        );
 
-                        go!(self, self.builder.create_branch(end), Value);
+                        check!(self, self.builder.create_branch(&end), Value);
                     }
-                    self.builder.set_position_end(end);
+
+                    self.builder.set_position_end(&end);
 
                     if empty {
                         self.jump_point.replace(Value::Empty);
@@ -321,45 +325,50 @@ impl Module {
                         (Value::Empty, _) => (),
                         (_, Value::Empty) => (),
                         (a, b) => {
-                            let p = go!(
+                            let p = check!(
                                 self,
-                                self.builder.create_phi(a, b, if_body, else_body),
+                                self.builder.create_phi(a, b, &if_body, &else_body),
                                 Value
                             );
                             return p;
                         }
                     }
                 } else {
-                    // TODO: remove ffi function
-                    let (end, empty) = match *self.jump_point.borrow() {
-                        Value::Empty => unsafe {
-                            let end = LLVMAppendBasicBlock(
-                                self.current_function.borrow().as_mut().unwrap(),
-                                NULL_STR,
+                    let (end, empty) = match &*self.jump_point.borrow() {
+                        Value::Empty => {
+                            let end = check!(
+                                self,
+                                self.builder.append_block(&self.current_function.borrow()),
+                                Value
                             );
                             (end, true)
-                        },
-                        Value::Block { llvm_value } => (llvm_value, false),
+                        }
+                        Value::Block { llvm_value } => (
+                            Value::Block {
+                                llvm_value: *llvm_value,
+                            },
+                            false,
+                        ),
                         _ => {
                             self.add_error("Unable to get basic block".into());
                             return Value::Empty;
                         }
                     };
                     if empty {
-                        self.jump_point.replace(Value::Block { llvm_value: end });
+                        self.jump_point.replace(end.clone());
                     }
 
-                    go!(
+                    check!(
                         self,
-                        self.builder.create_cbranch(&condition, if_body, end),
+                        self.builder.create_cbranch(&condition, &if_body, &end),
                         Value
                     );
 
-                    self.builder.set_position_end(if_body);
+                    self.builder.set_position_end(&if_body);
                     self.gen_parse_node(&body);
-                    go!(self, self.builder.create_branch(end), Value);
+                    check!(self, self.builder.create_branch(&end), Value);
 
-                    self.builder.set_position_end(end);
+                    self.builder.set_position_end(&end);
                     if empty {
                         self.jump_point.replace(Value::Empty);
                     }
@@ -369,70 +378,75 @@ impl Module {
             }
             Expression::LoopExpression(LoopExpression { loop_type, .. }) => match loop_type {
                 Loop::Until(cond, body) => {
-                    let condition_block = unsafe {
-                        LLVMAppendBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            NULL_STR,
-                        )
-                    };
-
-                    let body_block =
-                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
-
-                    let end =
-                        unsafe { LLVMCreateBasicBlockInContext(LLVMGetGlobalContext(), NULL_STR) };
-
-                    go!(self, self.builder.create_branch(condition_block), Value);
-
-                    self.builder.set_position_end(condition_block);
-                    let cond = self.gen_expression(cond);
-
-                    go!(
+                    let condition_block = check!(
                         self,
-                        self.builder.create_cbranch(&cond, body_block, end),
+                        self.builder.append_block(&self.current_function.borrow()),
                         Value
                     );
 
-                    unsafe {
-                        LLVMAppendExistingBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            body_block,
-                        );
-                    }
+                    let body_block = check!(self, self.builder.create_block(), Value);
 
-                    self.builder.set_position_end(body_block);
+                    let end = check!(self, self.builder.create_block(), Value);
+
+                    check!(self, self.builder.create_branch(&condition_block), Value);
+
+                    self.builder.set_position_end(&condition_block);
+                    let cond = self.gen_expression(cond);
+
+                    check!(
+                        self,
+                        self.builder.create_cbranch(&cond, &body_block, &end),
+                        Value
+                    );
+
+                    check!(
+                        self,
+                        self.builder
+                            .append_existing_block(&self.current_function.borrow(), &body_block),
+                        Value
+                    );
+
+                    self.builder.set_position_end(&body_block);
 
                     self.gen_parse_node(body);
 
-                    let val = go!(self, self.builder.create_branch(condition_block), Value);
+                    let val = check!(self, self.builder.create_branch(&condition_block), Value);
 
-                    unsafe {
-                        LLVMAppendExistingBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            end,
-                        )
-                    };
+                    check!(
+                        self,
+                        self.builder
+                            .append_existing_block(&self.current_function.borrow(), &end),
+                        Value
+                    );
 
-                    self.builder.set_position_end(end);
+                    self.builder.set_position_end(&end);
 
                     val
                 }
                 Loop::Infinite(body) => {
-                    let loop_block = unsafe {
-                        LLVMAppendBasicBlock(
-                            self.current_function.borrow().as_mut().unwrap(),
-                            NULL_STR,
-                        )
-                    };
-                    go!(self, self.builder.create_branch(loop_block), Value);
+                    let loop_block = check!(
+                        self,
+                        self.builder.append_block(&self.current_function.borrow()),
+                        Value
+                    );
+                    check!(self, self.builder.create_branch(&loop_block), Value);
 
-                    self.builder.set_position_end(loop_block);
+                    self.builder.set_position_end(&loop_block);
 
                     self.gen_parse_node(body);
 
-                    go!(self, self.builder.create_branch(loop_block), Value)
+                    check!(self, self.builder.create_branch(&loop_block), Value)
                 }
             },
+            Expression::FunctionCall(FunctionCall {
+                arguments,
+                expression_to_call,
+                ..
+            }) => {
+                let arguments: Vec<_> = arguments.iter().map(|f| self.gen_expression(f)).collect();
+                let expr = self.gen_expression(&expression_to_call);
+                check!(self, self.builder.create_fn_call(&expr, arguments), Value)
+            }
             Expression::Block(values, _) => {
                 return values
                     .iter()

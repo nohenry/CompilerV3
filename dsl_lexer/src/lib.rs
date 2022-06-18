@@ -432,6 +432,10 @@ pub fn lex(input: &String) -> Result<Vec<Token>, LexError> {
                                             it.next();
                                             OperatorKind::Eq
                                         }
+                                        Some('>') => {
+                                            it.next();
+                                            OperatorKind::Arrow
+                                        }
                                         _ => {
                                             it.next();
                                             OperatorKind::Assignment
