@@ -65,7 +65,6 @@ impl Module {
     }
 
     pub fn gen(&self) {
-
         self.gen_parse_node(&self.ast);
         self.code_gen_pass.replace(CodeGenPass::Values);
         self.gen_parse_node(&self.ast);
@@ -124,12 +123,46 @@ impl Module {
         self.current_symbol.borrow_mut().push(name.clone())
     }
 
+    pub fn add_and_set_symbol_from_path(&self, path: &[String], name: &String, sym: SymbolValue) {
+        let mut cur_sym = self.symbol_root.borrow_mut();
+        let current = self.get_symbol_mut(&mut cur_sym, &path);
+
+        if let Some(insert) = current {
+            insert.add_child(name, sym);
+        }
+
+        let mut sad = Vec::from(path);
+        sad.push(name.clone());
+        self.current_symbol.replace(sad);
+    }
+
     pub fn add_symbol(&self, name: &String, sym: SymbolValue) {
         let mut cur_sym = self.symbol_root.borrow_mut();
         let current = self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
 
         if let Some(c) = current {
             c.add_child(name, sym);
+        }
+    }
+
+    pub fn get_next_name(&self, path: &[String], name: String) -> String {
+        let cur_sym = self.symbol_root.borrow();
+        let current = self.get_symbol(&cur_sym, &path);
+
+        if let Some(insert) = current {
+            let mut i = 1;
+            if insert.children.contains_key(&name) {
+                let mut next_name = format!("{}{}", name, i);
+                while insert.children.contains_key(&next_name) {
+                    i += 1;
+                    next_name = format!("{}{}", name, i);
+                }
+                next_name
+            } else {
+                name
+            }
+        } else {
+            name
         }
     }
 

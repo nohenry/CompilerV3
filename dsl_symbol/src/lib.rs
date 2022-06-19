@@ -1,12 +1,10 @@
 use std::{collections::HashMap, fmt::Display};
 
+use dsl_lexer::ast::{FunctionSignature, ParseNode};
 use dsl_util::{CreateParent, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
-    core::{
-        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMInt1Type, LLVMInt32Type, LLVMInt8Type,
-        LLVMPointerType, LLVMVoidType,
-    },
+    core::{LLVMBuildIntCast2, LLVMBuildLoad2, LLVMPointerType, LLVMVoidType},
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMTypeRef, LLVMValueRef},
 };
 
@@ -25,6 +23,12 @@ pub enum Value {
         llvm_value: LLVMValueRef,
         function_type: Type,
     },
+    FunctionTemplate {
+        path: Vec<String>,
+        ty: FunctionSignature,
+        body: Box<ParseNode>,
+        ty_params: LinkedHashMap<String, Option<Vec<Type>>>,
+    },
     Instruction {
         llvm_value: LLVMValueRef,
     },
@@ -37,6 +41,12 @@ pub enum Value {
     },
 }
 
+impl Default for Value {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
 impl Value {
     pub fn get_type(&self) -> &Type {
         match self {
@@ -44,7 +54,10 @@ impl Value {
             Self::Variable { variable_type, .. } => variable_type,
             Self::Function { function_type, .. } => function_type,
             Self::Load { load_type, .. } => load_type,
-            Self::Empty | Self::Instruction { .. } | Self::Block { .. } => {
+            Self::Empty
+            | Self::Instruction { .. }
+            | Self::Block { .. }
+            | Self::FunctionTemplate { .. } => {
                 panic!("Called on unkown value!")
             }
         }
@@ -66,7 +79,10 @@ impl Value {
 
     pub fn get_value(&self, builder: LLVMBuilderRef) -> Result<LLVMValueRef, ()> {
         match self {
-            Value::Empty | Value::Instruction { .. } | Value::Block { .. } => Err(()),
+            Value::Empty
+            | Value::Instruction { .. }
+            | Value::Block { .. }
+            | Value::FunctionTemplate { .. } => Err(()),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
             Value::Variable {
                 llvm_value,
@@ -132,6 +148,7 @@ impl Display for Value {
             Value::Load { load_type, .. } => write!(f, "{}", load_type),
             Value::Instruction { .. } => write!(f, "Instruction"),
             Value::Block { .. } => write!(f, "Block"),
+            Value::FunctionTemplate { .. } => write!(f, "Function Template"),
             Value::Empty => write!(f, "Empty"),
         }
     }
@@ -372,14 +389,14 @@ impl PartialEq for Type {
             ) => {
                 for p in r_parameters.values().zip(l_parameters.values()) {
                     if p.0 != p.1 {
-                        return false
+                        return false;
                     }
                 }
 
                 if l_return_type != r_return_type {
-                    return false
+                    return false;
                 }
-                
+
                 true
             }
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
@@ -397,6 +414,7 @@ pub enum SymbolValue {
     Action(Type),
     Spec(Type),
     Alias(Type),
+    Generic(Type, Option<Vec<Type>>),
     Module,
 }
 
@@ -442,6 +460,7 @@ impl Display for Symbol {
             SymbolValue::Module => write!(f, "Module `{}`", self.name),
             SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
             SymbolValue::Template(_) => write!(f, "Template `{}`", self.name),
+            SymbolValue::Generic(_, _) => write!(f, "Generic `{}`", self.name),
         }
     }
 }

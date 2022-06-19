@@ -1,10 +1,8 @@
 
-value(a: int8): int8 => {
-    a
+value<T, U>(a: T, b: U): T => {
+    a 
 }
 
 main() => {
-    let d = value
-
-    value(6)
+    let d = value<int8>(0, true)
 }

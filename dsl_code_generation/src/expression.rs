@@ -1,15 +1,16 @@
-use dsl_errors::check;
+use dsl_errors::{check, CodeGenError};
+use llvm_sys::core::LLVMGetParam;
 use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
     BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
     LoopExpression, UnaryExpression,
 };
-use dsl_lexer::{OperatorKind, TokenKind};
+use dsl_lexer::{OperatorKind, Token, TokenKind};
 use dsl_util::cast;
 
 use super::module::Module;
-use dsl_symbol::{SymbolValue, Type, Value};
+use dsl_symbol::{Symbol, SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_expression(&self, expression: &Expression) -> Value {
@@ -137,7 +138,8 @@ impl Module {
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
 
-                        let op = check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
+                        let op =
+                            check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
                         check!(self, self.builder.create_store(&left, &op), Value);
 
                         // load modify and store value for op=
@@ -441,17 +443,206 @@ impl Module {
             Expression::FunctionCall(FunctionCall {
                 arguments,
                 expression_to_call,
+                generic,
                 ..
             }) => {
                 let arguments: Vec<_> = arguments.iter().map(|f| self.gen_expression(f)).collect();
                 let expr = self.gen_expression(&expression_to_call);
-                check!(self, self.builder.create_fn_call(&expr, arguments), Value)
+                if let (
+                    Value::FunctionTemplate {
+                        body,
+                        path,
+                        ty,
+                        ty_params,
+                    },
+                    Some(generic),
+                ) = (&expr, generic)
+                {
+                    let old_block = self.current_block.take();
+                    
+                    let old_symbol= self.current_symbol.take();
+                    self.current_symbol.replace(path.clone());
+
+                    {
+                        let mut sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
+
+                        if let Some(current) = current {
+                            let mut gens = generic.iter();
+                            let mut pram_iter = ty_params.iter();
+
+                            while let Some(p) = gens.next() {
+                                let (name, bounds) = pram_iter.next().unwrap();
+                                if let Some(sym) = current.children.get_mut(name) {
+                                    match &mut sym.value {
+                                        SymbolValue::Generic(ty, _) => {
+                                            *ty = self.gen_type(p);
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            }
+
+                            pram_iter.for_each(|(name, bounds)| {
+                                let found = ty.parameters.iter().position(|f| {
+                                    if let dsl_lexer::ast::Type::NamedType(t) = &f.symbol_type {
+                                        if cast!(&t.token_type, TokenKind::Ident) == name {
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                });
+                                if let Some(pos) = found {
+                                    if let Some(sym) = current.children.get_mut(name) {
+                                        match &mut sym.value {
+                                            SymbolValue::Generic(ty, _) => {
+                                                *ty = arguments[pos].get_type().clone();
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                }
+                            })
+                        }
+                    }
+
+                    let name = if let Some(last) = path.last() {
+                        let path = &path[..path.len() - 1];
+                        let name = self.get_next_name(path, last.clone());
+
+                        let return_type = self.gen_type(&ty.return_type);
+
+                        let types: Vec<(String, Type)> = ty
+                            .parameters
+                            .iter()
+                            .map(|f| {
+                                (
+                                    cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
+                                    self.gen_type(&f.symbol_type),
+                                )
+                            })
+                            .collect();
+
+                        let function_type = self.builder.get_fn(return_type.clone(), &types);
+
+                        let function = check!(
+                            self,
+                            self.builder
+                                .add_function(function_type, name.to_string(), self.module),
+                            Value
+                        );
+
+                        let block = check!(self, self.builder.append_block(&function), Value);
+
+                        self.current_block.replace(block);
+                        self.builder.set_position_end(&self.current_block.borrow());
+
+                        self.current_function.replace(function.clone());
+
+                        self.add_and_set_symbol_from_path(
+                            &path,
+                            &name,
+                            SymbolValue::Funtion(function),
+                        );
+
+                        let pallocs: Result<Vec<Value>, _> = types
+                            .iter()
+                            .map(|(_name, ty)| self.builder.create_alloc(ty))
+                            .collect();
+                        let pallocs = check!(self, pallocs, Value);
+
+                        let res: Result<(), _> = pallocs
+                            .iter()
+                            .enumerate()
+                            .map(|(i, alloc)| {
+                                let param = unsafe {
+                                    if let Ok(p) = self
+                                        .current_function
+                                        .borrow()
+                                        .get_value(self.builder.get_builder())
+                                    {
+                                        LLVMGetParam(p, i.try_into().unwrap())
+                                    } else {
+                                        return Err(CodeGenError {
+                                            message: "Unable to get function value!".to_owned(),
+                                        });
+                                    }
+                                };
+                                self.builder.create_store_raw_val(alloc, param)?;
+                                Ok(())
+                            })
+                            .collect();
+
+                        check!(self, res, Value);
+
+                        {
+                            let mut cur_sym = self.symbol_root.borrow_mut();
+                            let current =
+                                self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+                            if let Some(c) = current {
+                                for ((name, ty), alloc) in types.iter().zip(pallocs.into_iter()) {
+                                    println!("Added chjild {} ", name);
+                                    c.add_child(&name, SymbolValue::Variable(alloc));
+                                }
+                            }
+                        }
+
+                        let alloc = match return_type {
+                            Type::Unit { .. } => None,
+                            ty => Some(check!(self, self.builder.create_alloc(&ty), Value)),
+                        };
+
+                        let val = self.gen_parse_node(body.as_ref());
+
+                        if let Some(alloc) = alloc {
+                            if val.has_value() {
+                                check!(self, self.builder.create_store(&alloc, &val), Value);
+                            }
+
+                            check!(self, self.builder.create_ret(&alloc), Value);
+                        } else {
+                            self.builder.create_ret_void();
+                        }
+                        Some(name)
+                    } else {
+                        None
+                    };
+
+                    self.current_block.replace(old_block);
+                    self.current_symbol.replace(old_symbol);
+
+                    self.builder.set_position_end(&self.current_block.borrow());
+
+                    if let Some(name) = name {
+                        let mut path = Vec::from(&path[..path.len() - 1]);
+                        path.push(name);
+
+                        let mut cur_sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut cur_sym, &path);
+
+                        if let Some(Symbol {
+                            value: SymbolValue::Funtion(val),
+                            ..
+                        }) = current
+                        {
+                            check!(self, self.builder.create_fn_call(val, arguments), Value)
+                        } else {
+                            Value::Empty
+                        }
+                    } else {
+                        Value::Empty
+                    }
+                } else {
+                    check!(self, self.builder.create_fn_call(&expr, arguments), Value)
+                }
             }
             Expression::Block(values, _) => {
                 return values
                     .iter()
                     .map(|stmt| self.gen_parse_node(stmt))
                     .last()
+                    .or(Some(Value::Empty))
                     .unwrap()
             }
             _ => {

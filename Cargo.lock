@@ -148,12 +148,14 @@ version = "0.1.0"
 dependencies = [
  "dsl_errors",
  "dsl_lexer",
+ "dsl_symbol",
 ]
 
 [[package]]
 name = "dsl_symbol"
 version = "0.1.0"
 dependencies = [
+ "dsl_lexer",
  "dsl_util",
  "linked-hash-map",
  "llvm-sys",

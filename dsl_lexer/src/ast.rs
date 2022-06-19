@@ -119,6 +119,7 @@ pub struct FunctionCall {
     pub expression_to_call: Box<Expression>,
     pub arguments: Vec<Expression>,
     pub paren_tokens: Range,
+    pub generic: Option<Vec<Type>>,
     pub range: Range,
 }
 
@@ -227,6 +228,7 @@ pub enum Expression {
     LoopExpression(LoopExpression),
 
     Block(/* Statements */ Vec<ParseNode>, Range),
+    Generic(Token, Vec<Type>, Range)
 }
 
 impl Expression {
@@ -242,6 +244,7 @@ impl Expression {
             Expression::IfExpression(t) => (t.range),
             Expression::LoopExpression(t) => (t.range),
             Expression::Block(_, f) => f.clone(),
+            Expression::Generic(_, _, r) => r.clone(),
         }
     }
 }
@@ -260,6 +263,7 @@ impl Display for Expression {
             Expression::LoopExpression(b) => write!(f, "{}", b),
 
             Expression::Block(_, _) => write!(f, "{}", ColoredString::from("Block").cyan()),
+            Expression::Generic(_, _, _) => write!(f, "GenericType"),
         }
     }
 }
@@ -278,6 +282,7 @@ impl TreeDisplay for Expression {
             Expression::LoopExpression(l) => l.num_children(),
 
             Expression::Block(i, _) => i.len(),
+            Expression::Generic(_, _, _) => 0
         }
     }
 
@@ -444,6 +449,17 @@ pub struct GenericType {
     pub base_type: Box<Type>,
     pub arguments: Vec<Type>,
     pub range: Range,
+}
+
+impl GenericType {
+    pub fn to_expr_generic(self) -> Expression {
+        let name = match *self.base_type {
+            Type::NamedType(t) =>t,
+            _ => panic!()
+        };
+
+        Expression::Generic(name, self.arguments, self.range)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

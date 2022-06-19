@@ -583,7 +583,7 @@ impl IRBuilder {
                 })
             },
             _ => Err(CodeGenError {
-                message: format!("Attemted to call non function value!"),
+                message: format!("Attempted to call non function value!"),
             }),
         }
     }

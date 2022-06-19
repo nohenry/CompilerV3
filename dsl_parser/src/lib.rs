@@ -367,31 +367,20 @@ fn parse_function_call(
     }
     let cp = expect(tokens, TokenKind::CloseParen)?;
     let start = to_be_called.get_range().0;
+    let (to_be_called, generic) = if let Expression::Generic(ident, args, _) = to_be_called {
+        (Expression::Identifier(ident), Some(args))
+    } else {
+        (to_be_called, None)
+    };
     let fc = FunctionCall {
         expression_to_call: Box::new(to_be_called),
         arguments: args,
         paren_tokens: (op.range.0, cp.range.1),
+        generic,
         range: (start, cp.range.1),
     };
     Ok(Expression::FunctionCall(fc))
 }
-
-// fn parse_var_or_func(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
-//     let ttype = parse_type(tokens)?;
-//     let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
-
-//     if let Some(t) = tokens.current() {
-//         match t.token_type {
-//             TokenKind::OpenParen => {
-//                 return parse_function(tokens, ttype, ident_token);
-//             }
-//             _ => return parse_variable_decleration(tokens, ttype, ident_token),
-//         }
-//     }
-//     Err(ParseError::new(&String::from(
-//         "Could not parse funciton or variable",
-//     )))
-// }
 
 fn parse_function(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
     let ident_token = expect(tokens, TokenKind::Ident("".to_string()))?;
@@ -616,6 +605,10 @@ fn parse_operator_expression(
                 let lleft = left?;
                 match token_type {
                     TokenKind::OpenParen => return parse_function_call(tokens, lleft),
+                    TokenKind::Operator(Operator {
+                        operator: OperatorKind::Lt,
+                        ..
+                    }) => return parse_function_call(tokens, lleft),
                     TokenKind::OpenBracket => {
                         let ob = expect(tokens, TokenKind::OpenBracket)?;
                         let value = parse_expression(tokens, 0)?;
@@ -961,6 +954,9 @@ fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
 
         match tokens.current() {
             Some(t) => match t.token_type {
+                TokenKind::Comma => {
+                    tokens.move_next();
+                }
                 TokenKind::Operator(Operator {
                     operator: OperatorKind::Gt,
                     ..
@@ -1065,6 +1061,7 @@ fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> 
 }
 
 fn parse_ident(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
+    let index = tokens.index();
     let possible_type = parse_type(tokens);
 
     if let Some(Token {
@@ -1083,8 +1080,17 @@ fn parse_ident(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> {
                 TokenKind::Ident(_) => Ok(Expression::Identifier(t)),
                 _ => Err(ParseError::new(&format!("Unexpected type in expression!"))),
             },
+            Ok(Type::GenericType(ty)) => Ok(ty.to_expr_generic()),
+
             _ => {
+                // if let (Some(ind1), Some(ind2)) = (index, tokens.index()){
+                //     let diff = ind2 - ind1;
+                //     for _ in 0..diff {
+                //         tokens.move_prev();
+                //     }
+                // }
                 if let Some(ident) = tokens.current() {
+                    tokens.move_next();
                     Ok(Expression::Identifier((*ident).clone()))
                 } else {
                     Err(ParseError::new(&format!("Expected identifer")))

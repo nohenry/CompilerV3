@@ -1,11 +1,14 @@
+use dsl_symbol::SymbolValue;
+use dsl_util::cast;
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::{
     LLVMArrayType, LLVMDoubleType, LLVMFloatType, LLVMFunctionType, LLVMInt1Type, LLVMInt32Type,
     LLVMInt8Type, LLVMIntType, LLVMPointerType, LLVMVoidType,
 };
 
-use dsl_lexer::ast::{
-    ArrayInitializer, ArrayType, Expression, FunctionType, Literal, ReferenceType, Type,
+use dsl_lexer::{
+    ast::{ArrayInitializer, ArrayType, Expression, FunctionType, Literal, ReferenceType, Type},
+    TokenKind,
 };
 
 use super::module::Module;
@@ -96,6 +99,29 @@ impl Module {
                     llvm_type: LLVMVoidType(),
                 }
             },
+            c @ Type::NamedType(token) => {
+                let str = cast!(&token.token_type, TokenKind::Ident);
+
+                let sym = self.symbol_root.borrow();
+                let current = self.get_symbol(&sym, &self.current_symbol.borrow());
+
+                if let Some(current) = current {
+                    if let Some(al_sym) = current.children.get(str) {
+                        let syysdf = al_sym;
+                        match &syysdf.value {
+                            SymbolValue::Generic(ty, bounds) => ty.clone(),
+                            _ => {
+                                self.add_error(format!("Unsupported type {:?}", c));
+                                dsl_symbol::Type::Empty
+                            }
+                        }
+                    } else {
+                        dsl_symbol::Type::Empty
+                    }
+                } else {
+                    dsl_symbol::Type::Empty
+                }
+            }
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
                 dsl_symbol::Type::Empty
