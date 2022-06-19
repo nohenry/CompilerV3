@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+use std::ffi::CStr;
+
 use dsl_errors::{check, CodeGenError};
 use linked_hash_map::LinkedHashMap;
-use llvm_sys::core::LLVMGetParam;
+use llvm_sys::core::{LLVMGetParam, LLVMPrintModuleToString};
 
 use dsl_lexer::ast::{
     FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TypeSymbol,
@@ -162,6 +165,7 @@ impl Module {
                             ty: fty.clone(),
                             ty_params,
                             path,
+                            types: HashMap::new(),
                         }),
                     );
 

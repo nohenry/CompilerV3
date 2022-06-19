@@ -1,6 +1,8 @@
 use dsl_errors::{check, CodeGenError};
 use llvm_sys::core::LLVMGetParam;
-use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
+use llvm_sys::{
+    LLVMGetInsertPoint, LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetInsertPoint,
+};
 
 use dsl_lexer::ast::{
     BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
@@ -448,27 +450,31 @@ impl Module {
             }) => {
                 let arguments: Vec<_> = arguments.iter().map(|f| self.gen_expression(f)).collect();
                 let expr = self.gen_expression(&expression_to_call);
-                if let (
-                    Value::FunctionTemplate {
-                        body,
-                        path,
-                        ty,
-                        ty_params,
-                    },
-                    Some(generic),
-                ) = (&expr, generic)
+                if let Value::FunctionTemplate {
+                    body,
+                    path,
+                    ty,
+                    ty_params,
+                    types,
+                } = &expr
                 {
                     let old_block = self.current_block.take();
-                    
-                    let old_symbol= self.current_symbol.take();
+
+                    let old_symbol = self.current_symbol.take();
+                    let old_function = self.current_function.take();
                     self.current_symbol.replace(path.clone());
+
+                    let mut fn_types = vec![];
 
                     {
                         let mut sym = self.symbol_root.borrow_mut();
                         let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
 
                         if let Some(current) = current {
-                            let mut gens = generic.iter();
+                            let mut gens = generic
+                                .as_ref()
+                                .map_or(Some([].iter()), |f| Some(f.iter()))
+                                .unwrap();
                             let mut pram_iter = ty_params.iter();
 
                             while let Some(p) = gens.next() {
@@ -477,6 +483,7 @@ impl Module {
                                     match &mut sym.value {
                                         SymbolValue::Generic(ty, _) => {
                                             *ty = self.gen_type(p);
+                                            fn_types.push(ty.to_string())
                                         }
                                         _ => (),
                                     }
@@ -497,130 +504,160 @@ impl Module {
                                         match &mut sym.value {
                                             SymbolValue::Generic(ty, _) => {
                                                 *ty = arguments[pos].get_type().clone();
+                                                fn_types.push(ty.to_string())
                                             }
                                             _ => (),
                                         }
                                     }
+                                } else {
+                                    self.add_error(format!(
+                                        "Unable to determine type for generic paramater: `{}` -- Please provide type parameter",
+                                        name
+                                    ))
                                 }
                             })
                         }
                     }
 
+                    let found = types.iter().find(|(f, _)| *f == &fn_types);
+
                     let name = if let Some(last) = path.last() {
-                        let path = &path[..path.len() - 1];
-                        let name = self.get_next_name(path, last.clone());
+                        if let Some(ty) = found {
+                            Some(ty.1.last().unwrap().clone())
+                        } else {
+                            let path = &path[..path.len() - 1];
+                            let name = self.get_next_name(path, last.clone());
 
-                        let return_type = self.gen_type(&ty.return_type);
+                            let mut typesda = Vec::from(path);
+                            typesda.push(name.clone());
 
-                        let types: Vec<(String, Type)> = ty
-                            .parameters
-                            .iter()
-                            .map(|f| {
-                                (
-                                    cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
-                                    self.gen_type(&f.symbol_type),
-                                )
-                            })
-                            .collect();
+                            let return_type = self.gen_type(&ty.return_type);
 
-                        let function_type = self.builder.get_fn(return_type.clone(), &types);
+                            let types: Vec<(String, Type)> = ty
+                                .parameters
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
+                                        self.gen_type(&f.symbol_type),
+                                    )
+                                })
+                                .collect();
 
-                        let function = check!(
-                            self,
-                            self.builder
-                                .add_function(function_type, name.to_string(), self.module),
-                            Value
-                        );
+                            let function_type = self.builder.get_fn(return_type.clone(), &types);
 
-                        let block = check!(self, self.builder.append_block(&function), Value);
+                            let function = check!(
+                                self,
+                                self.builder.add_function(
+                                    function_type,
+                                    name.to_string(),
+                                    self.module
+                                ),
+                                Value
+                            );
 
-                        self.current_block.replace(block);
-                        self.builder.set_position_end(&self.current_block.borrow());
+                            let block = check!(self, self.builder.append_block(&function), Value);
 
-                        self.current_function.replace(function.clone());
+                            self.current_block.replace(block);
+                            self.builder.set_position_end(&self.current_block.borrow());
 
-                        self.add_and_set_symbol_from_path(
-                            &path,
-                            &name,
-                            SymbolValue::Funtion(function),
-                        );
+                            self.current_function.replace(function.clone());
 
-                        let pallocs: Result<Vec<Value>, _> = types
-                            .iter()
-                            .map(|(_name, ty)| self.builder.create_alloc(ty))
-                            .collect();
-                        let pallocs = check!(self, pallocs, Value);
+                            self.add_and_set_symbol_from_path(
+                                &path,
+                                &name,
+                                SymbolValue::Funtion(function),
+                            );
 
-                        let res: Result<(), _> = pallocs
-                            .iter()
-                            .enumerate()
-                            .map(|(i, alloc)| {
-                                let param = unsafe {
-                                    if let Ok(p) = self
-                                        .current_function
-                                        .borrow()
-                                        .get_value(self.builder.get_builder())
+                            let pallocs: Result<Vec<Value>, _> = types
+                                .iter()
+                                .map(|(_name, ty)| self.builder.create_alloc(ty))
+                                .collect();
+                            let pallocs = check!(self, pallocs, Value);
+
+                            let res: Result<(), _> = pallocs
+                                .iter()
+                                .enumerate()
+                                .map(|(i, alloc)| {
+                                    let param = unsafe {
+                                        if let Ok(p) = self
+                                            .current_function
+                                            .borrow()
+                                            .get_value(self.builder.get_builder())
+                                        {
+                                            LLVMGetParam(p, i.try_into().unwrap())
+                                        } else {
+                                            return Err(CodeGenError {
+                                                message: "Unable to get function value!".to_owned(),
+                                            });
+                                        }
+                                    };
+                                    self.builder.create_store_raw_val(alloc, param)?;
+                                    Ok(())
+                                })
+                                .collect();
+
+                            check!(self, res, Value);
+
+                            {
+                                let mut cur_sym = self.symbol_root.borrow_mut();
+                                let current = self
+                                    .get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+                                if let Some(c) = current {
+                                    for ((name, ty), alloc) in types.iter().zip(pallocs.into_iter())
                                     {
-                                        LLVMGetParam(p, i.try_into().unwrap())
-                                    } else {
-                                        return Err(CodeGenError {
-                                            message: "Unable to get function value!".to_owned(),
-                                        });
+                                        c.add_child(&name, SymbolValue::Variable(alloc));
                                     }
-                                };
-                                self.builder.create_store_raw_val(alloc, param)?;
-                                Ok(())
-                            })
-                            .collect();
-
-                        check!(self, res, Value);
-
-                        {
-                            let mut cur_sym = self.symbol_root.borrow_mut();
-                            let current =
-                                self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
-
-                            if let Some(c) = current {
-                                for ((name, ty), alloc) in types.iter().zip(pallocs.into_iter()) {
-                                    println!("Added chjild {} ", name);
-                                    c.add_child(&name, SymbolValue::Variable(alloc));
                                 }
                             }
-                        }
 
-                        let alloc = match return_type {
-                            Type::Unit { .. } => None,
-                            ty => Some(check!(self, self.builder.create_alloc(&ty), Value)),
-                        };
+                            let alloc = match return_type {
+                                Type::Unit { .. } => None,
+                                ty => Some(check!(self, self.builder.create_alloc(&ty), Value)),
+                            };
 
-                        let val = self.gen_parse_node(body.as_ref());
+                            let val = self.gen_parse_node(body.as_ref());
 
-                        if let Some(alloc) = alloc {
-                            if val.has_value() {
-                                check!(self, self.builder.create_store(&alloc, &val), Value);
+                            if let Some(alloc) = alloc {
+                                if val.has_value() {
+                                    check!(self, self.builder.create_store(&alloc, &val), Value);
+                                }
+
+                                check!(self, self.builder.create_ret(&alloc), Value);
+                            } else {
+                                self.builder.create_ret_void();
                             }
 
-                            check!(self, self.builder.create_ret(&alloc), Value);
-                        } else {
-                            self.builder.create_ret_void();
+                            Some(name)
                         }
-                        Some(name)
                     } else {
                         None
                     };
 
                     self.current_block.replace(old_block);
                     self.current_symbol.replace(old_symbol);
+                    self.current_function.replace(old_function);
 
                     self.builder.set_position_end(&self.current_block.borrow());
 
                     if let Some(name) = name {
-                        let mut path = Vec::from(&path[..path.len() - 1]);
-                        path.push(name);
+                        let mut npath = Vec::from(&path[..path.len() - 1]);
+                        npath.push(name);
 
-                        let mut cur_sym = self.symbol_root.borrow_mut();
-                        let current = self.get_symbol_mut(&mut cur_sym, &path);
+                        let mut sym = self.symbol_root.borrow_mut();
 
+                        // let mut sym = self.symbol_root.borrow_mut();
+                        let fn_templ = self.get_symbol_mut(&mut sym, &path);
+                        if let Some(Symbol {
+                            value: SymbolValue::Funtion(Value::FunctionTemplate { types, .. }),
+                            ..
+                        }) = fn_templ
+                        {
+                            types.insert(fn_types, npath.clone());
+                        }
+
+                        let current = self.get_symbol_mut(&mut sym, &npath);
                         if let Some(Symbol {
                             value: SymbolValue::Funtion(val),
                             ..

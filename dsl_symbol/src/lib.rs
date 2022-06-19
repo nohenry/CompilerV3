@@ -4,7 +4,10 @@ use dsl_lexer::ast::{FunctionSignature, ParseNode};
 use dsl_util::{CreateParent, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
-    core::{LLVMBuildIntCast2, LLVMBuildLoad2, LLVMPointerType, LLVMVoidType},
+    core::{
+        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMGetIntTypeWidth, LLVMGetTypeKind, LLVMPointerType,
+        LLVMVoidType,
+    },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMTypeRef, LLVMValueRef},
 };
 
@@ -28,6 +31,7 @@ pub enum Value {
         ty: FunctionSignature,
         body: Box<ParseNode>,
         ty_params: LinkedHashMap<String, Option<Vec<Type>>>,
+        types: HashMap<Vec<String>, Vec<String>>,
     },
     Instruction {
         llvm_value: LLVMValueRef,
@@ -254,17 +258,72 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Empty => write!(f, ""),
-            Type::Unit { .. } => write!(f, "Unit"),
-            Type::Integer { signed, .. } if !signed => write!(f, "Integer (unsigned)"),
-            Type::Integer { .. } => write!(f, "Integer (signed)"),
-            Type::Char { .. } => write!(f, "Char"),
-            Type::String { .. } => write!(f, "String"),
-            Type::Float { .. } => write!(f, "Float"),
-            Type::Boolean { .. } => write!(f, "Boolean"),
-            Type::Array { .. } => write!(f, "Array"),
-            Type::Reference { .. } => write!(f, "Reference"),
-            Type::Function { .. } => write!(f, "Function"),
+            Self::Empty => write!(f, ""),
+            Self::Unit { .. } => f.write_str("()"),
+            Self::Integer {
+                signed: true,
+                llvm_type,
+            } => {
+                let width = unsafe { LLVMGetIntTypeWidth(*llvm_type) };
+                write!(f, "int{}", width)
+            }
+            Self::Integer {
+                signed: false,
+                llvm_type,
+            } => {
+                let width = unsafe { LLVMGetIntTypeWidth(*llvm_type) };
+                write!(f, "uint{}", width)
+            }
+            Self::Boolean { .. } => write!(f, "bool"),
+            Self::Float { llvm_type } => {
+                let ty = unsafe { LLVMGetTypeKind(*llvm_type) };
+                match ty {
+                    llvm_sys::LLVMTypeKind::LLVMFloatTypeKind => write!(f, "float32"),
+                    llvm_sys::LLVMTypeKind::LLVMDoubleTypeKind => write!(f, "float64"),
+                    _ => write!(f, ""),
+                }
+            }
+            Self::Char { .. } => write!(f, "char"),
+            Self::Array { base_type, .. } => {
+                write!(f, "[{}]", base_type)
+            }
+            Self::Function {
+                parameters,
+                return_type,
+                ..
+            } => {
+                write!(f, "(")?;
+                if parameters.len() >= 1 {
+                    let mut iter = parameters.iter();
+                    write!(f, "{}", iter.next().unwrap().1)?;
+                    for (_, t) in iter {
+                        write!(f, ", {}", t)?;
+                    }
+                }
+                write!(f, ")")?;
+                if let Type::Unit { .. } = **return_type {
+                    write!(f, " =>")
+                } else {
+                    write!(f, ":{} =>", return_type)
+                }
+            }
+            Self::Reference { base_type, .. } => {
+                write!(f, "&{}", base_type)
+            }
+            Self::String { .. } => {
+                write!(f, "string")
+            } // Self::(GenericType {
+              //     arguments,
+              //     base_type,
+              //     ..
+              // }) => {
+              //     write!(f, "{}<", base_type)?;
+              //     write!(f, "{}", arguments[0])?;
+              //     for t in &arguments[1..] {
+              //         write!(f, ", {}", t)?;
+              //     }
+              //     write!(f, ">")
+              // }
         }
     }
 }

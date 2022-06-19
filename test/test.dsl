@@ -1,8 +1,9 @@
 
-value<T, U>(a: T, b: U): T => {
-    a 
+value<T>(a: T, b: T): T => {
+    a + b
 }
 
 main() => {
-    let d = value<int8>(0, true)
+    let d = value(0, 4)
+    let g = value(0, 4)
 }
