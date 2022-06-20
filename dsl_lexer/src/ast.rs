@@ -228,7 +228,7 @@ pub enum Expression {
     LoopExpression(LoopExpression),
 
     Block(/* Statements */ Vec<ParseNode>, Range),
-    Generic(Token, Vec<Type>, Range)
+    Generic(Token, Vec<Type>, Range),
 }
 
 impl Expression {
@@ -282,7 +282,7 @@ impl TreeDisplay for Expression {
             Expression::LoopExpression(l) => l.num_children(),
 
             Expression::Block(i, _) => i.len(),
-            Expression::Generic(_, _, _) => 0
+            Expression::Generic(_, _, _) => 0,
         }
     }
 
@@ -454,8 +454,8 @@ pub struct GenericType {
 impl GenericType {
     pub fn to_expr_generic(self) -> Expression {
         let name = match *self.base_type {
-            Type::NamedType(t) =>t,
-            _ => panic!()
+            Type::NamedType(t) => t,
+            _ => panic!(),
         };
 
         Expression::Generic(name, self.arguments, self.range)
@@ -898,7 +898,7 @@ pub struct GenericEntry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParameters {
-    pub parameters: Vec<(Token, Option<Vec<Type>>)>,
+    pub parameters: Vec<(Token, Option<Vec<Type>>, Option<Type>)>,
     pub range: Range,
 }
 
@@ -918,7 +918,7 @@ impl TreeDisplay for GenericParameters {
     }
 
     fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn TreeDisplay + 'a> {
-        let (child_name, restraints) = &self.parameters[index];
+        let (child_name, restraints, specialization) = &self.parameters[index];
         if let Some(res) = &restraints {
             Box::new(CreateParent(
                 cast!(&child_name.token_type, TokenKind::Ident).clone(),
@@ -928,6 +928,11 @@ impl TreeDisplay for GenericParameters {
                         b
                     })
                     .collect(),
+            ))
+        } else if let Some(spec) = &specialization {
+            Box::new(CreateParent(
+                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+                vec![spec],
             ))
         } else {
             Box::new(Grouper(

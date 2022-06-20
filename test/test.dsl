@@ -1,9 +1,17 @@
 
-value<T>(a: T, b: T): T => {
-    a + b
+value<T, U>(a: T, b: U): T => {
+    a
+}
+
+value<T as bool, U>(a: T, b: U): T => {
+    if a == true {
+        false
+    } else {
+        true 
+    }
 }
 
 main() => {
-    let d = value(0, 4)
-    let g = value(0, 4)
+    value(true, 4)
+    value(false, 0)
 }

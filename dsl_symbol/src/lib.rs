@@ -12,6 +12,12 @@ use llvm_sys::{
 };
 
 #[derive(Debug, Clone)]
+pub enum GenericType {
+    Generic(Option<Vec<Type>>),
+    Specialization(Type),
+}
+
+#[derive(Debug, Clone)]
 pub enum Value {
     Empty,
     Literal {
@@ -30,8 +36,9 @@ pub enum Value {
         path: Vec<String>,
         ty: FunctionSignature,
         body: Box<ParseNode>,
-        ty_params: LinkedHashMap<String, Option<Vec<Type>>>,
-        types: HashMap<Vec<String>, Vec<String>>,
+        ty_params: LinkedHashMap<String, GenericType>,
+        existing: HashMap<Vec<String>, Vec<String>>,
+        specialization: HashMap<Vec<String>, Vec<String>>,
     },
     Instruction {
         llvm_value: LLVMValueRef,
@@ -473,7 +480,7 @@ pub enum SymbolValue {
     Action(Type),
     Spec(Type),
     Alias(Type),
-    Generic(Type, Option<Vec<Type>>),
+    Generic(Type, GenericType),
     Module,
 }
 
@@ -526,11 +533,25 @@ impl Display for Symbol {
 
 impl TreeDisplay for Symbol {
     fn num_children(&self) -> usize {
-        self.children.len()
+        match &self.value {
+            SymbolValue::Generic(_, ty) => match ty {
+                GenericType::Generic(Some(t)) => t.len(),
+                GenericType::Specialization(_) => 1,
+                _ => 0,
+            },
+            _ => self.children.len(),
+        }
     }
 
     fn child_at(&self, index: usize) -> Option<&dyn TreeDisplay> {
-        Some(self.children.values().nth(index).unwrap())
+        match &self.value {
+            SymbolValue::Generic(_, ty) => match ty {
+                GenericType::Generic(Some(t)) => Some(&t[index]),
+                GenericType::Specialization(t) => Some(t),
+                _ => panic!(),
+            },
+            _ => Some(self.children.values().nth(index).unwrap()),
+        }
     }
 
     // fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn TreeDisplay + 'a> {

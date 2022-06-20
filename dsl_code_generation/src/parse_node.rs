@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::ffi::CStr;
 
 use dsl_errors::{check, CodeGenError};
 use linked_hash_map::LinkedHashMap;
-use llvm_sys::core::{LLVMGetParam, LLVMPrintModuleToString};
+use llvm_sys::core::LLVMGetParam;
 
 use dsl_lexer::ast::{
     FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TypeSymbol,
@@ -15,7 +14,7 @@ use dsl_util::cast;
 use crate::module::CodeGenPass;
 
 use super::module::Module;
-use dsl_symbol::{Symbol, SymbolValue, Type, Value};
+use dsl_symbol::{GenericType, Symbol, SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_parse_node(&self, node: &ParseNode) -> Value {
@@ -141,19 +140,32 @@ impl Module {
             }) => {
                 let name = cast!(&identifier.token_type, TokenKind::Ident);
 
-                if let Some(generic) = generic {
+                if let (Some(generic), CodeGenPass::Symbols) =
+                    (generic, &*self.code_gen_pass.borrow())
+                {
                     let mut path = self.current_symbol.borrow().clone();
                     path.push(name.clone());
                     let mut ty_params = LinkedHashMap::new();
                     match &**generic {
                         ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
-                            parameters.iter().for_each(|(tok, bounds)| {
-                                let str = cast!(&tok.token_type, TokenKind::Ident);
-                                let bounds = bounds
-                                    .clone()
-                                    .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
-                                ty_params.insert(str.clone(), bounds);
-                            })
+                            let p: Result<(), ()> = parameters
+                                .iter()
+                                .map(|(tok, bounds, specs)| {
+                                    if let Some(specs) = specs {
+                                        Err(())
+                                    } else {
+                                        let str = cast!(&tok.token_type, TokenKind::Ident);
+                                        let bounds = bounds.clone().map(|bnd| {
+                                            bnd.iter().map(|t| self.gen_type(t)).collect()
+                                        });
+                                        ty_params.insert(str.clone(), GenericType::Generic(bounds));
+                                        Ok(())
+                                    }
+                                })
+                                .collect();
+                            if p.is_err() {
+                                return Value::Empty;
+                            }
                         }
                         _ => (),
                     };
@@ -165,7 +177,8 @@ impl Module {
                             ty: fty.clone(),
                             ty_params,
                             path,
-                            types: HashMap::new(),
+                            existing: HashMap::new(),
+                            specialization: HashMap::new(),
                         }),
                     );
 
@@ -180,18 +193,133 @@ impl Module {
                                     parameters,
                                     ..
                                 }) => {
-                                    parameters.iter().for_each(|(ident, bounds)| {
-                                        let bounds = if let Some(bounds) = bounds {
-                                            let bounds: Vec<_> =
-                                                bounds.iter().map(|b| self.gen_type(b)).collect();
-                                            Some(bounds)
+                                    parameters.iter().for_each(|(ident, bounds, specs)| {
+                                        if let Some(specs) = specs {
+                                            // let ty = self.gen_type(specs);
+                                            // c.add_child(
+                                            //     cast!(&ident.token_type, TokenKind::Ident),
+                                            //     SymbolValue::Generic(
+                                            //         Type::Empty,
+                                            //         GenericType::Specialization(ty),
+                                            //     ),
+                                            // )
                                         } else {
-                                            None
-                                        };
-                                        c.add_child(
-                                            cast!(&ident.token_type, TokenKind::Ident),
-                                            SymbolValue::Generic(Type::Empty, bounds),
-                                        )
+                                            let bounds = if let Some(bounds) = bounds {
+                                                let bounds: Vec<_> = bounds
+                                                    .iter()
+                                                    .map(|b| self.gen_type(b))
+                                                    .collect();
+                                                Some(bounds)
+                                            } else {
+                                                None
+                                            };
+                                            c.add_child(
+                                                cast!(&ident.token_type, TokenKind::Ident),
+                                                SymbolValue::Generic(
+                                                    Type::Empty,
+                                                    GenericType::Generic(bounds),
+                                                ),
+                                            )
+                                        }
+                                    });
+                                }
+                                _ => (),
+                            };
+                        }
+                    }
+
+                    self.pop_symbol();
+                } else if let (Some(generic), CodeGenPass::SymbolsSpecialization) =
+                    (generic, &*self.code_gen_pass.borrow())
+                {
+                    let mut path = self.current_symbol.borrow().clone();
+                    path.push(name.clone());
+                    let mut ty_params = LinkedHashMap::new();
+                    match &**generic {
+                        ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
+                            let p = parameters.iter().fold(0, |acc, (tok, bounds, specs)| {
+                                if let Some(specs) = specs {
+                                    let str = cast!(&tok.token_type, TokenKind::Ident);
+                                    let ty = self.gen_type(specs);
+                                    ty_params.insert(str.clone(), GenericType::Specialization(ty));
+                                    acc + 1
+                                } else {
+                                    let str = cast!(&tok.token_type, TokenKind::Ident);
+                                    let bounds = bounds
+                                        .clone()
+                                        .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
+                                    ty_params.insert(str.clone(), GenericType::Generic(bounds));
+                                    acc
+                                }
+                            });
+                            if p == 0 {
+                                return Value::Empty;
+                            }
+                        }
+                        _ => (),
+                    };
+
+                    let name = self.get_next_name(&path[..path.len() - 1], name.to_string());
+
+                    {
+                        let mut cur_sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut cur_sym, &path);
+
+                        let mut npath = Vec::from(&path[..path.len() -1]);
+                        npath.push(name.clone());
+
+                        let types = ty_params
+                            .iter()
+                            .map(|f| match f.1 {
+                                GenericType::Generic(_) => "".to_string(),
+                                GenericType::Specialization(s) => s.to_string(),
+                            })
+                            .collect();
+                        if let Some(Symbol {
+                            value:
+                                SymbolValue::Funtion(Value::FunctionTemplate { specialization, .. }),
+                            ..
+                        }) = current
+                        {
+                            specialization.insert(types, npath);
+                        }
+                    }
+
+                    self.add_and_set_symbol(
+                        &name,
+                        SymbolValue::Funtion(Value::FunctionTemplate {
+                            body: body.clone(),
+                            ty: fty.clone(),
+                            ty_params,
+                            path,
+                            existing: HashMap::new(),
+                            specialization: HashMap::new(),
+                        }),
+                    );
+
+                    {
+                        let mut cur_sym = self.symbol_root.borrow_mut();
+                        let current =
+                            self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+                        if let Some(c) = current {
+                            match &**generic {
+                                ParseNode::GenericParameters(GenericParameters {
+                                    parameters,
+                                    ..
+                                }) => {
+                                    parameters.iter().for_each(|(ident, bounds, specs)| {
+                                        if let Some(specs) = specs {
+                                            let ty = self.gen_type(specs);
+                                            c.add_child(
+                                                cast!(&ident.token_type, TokenKind::Ident),
+                                                SymbolValue::Generic(
+                                                    Type::Empty,
+                                                    GenericType::Specialization(ty),
+                                                ),
+                                            )
+                                        } else {
+                                        }
                                     });
                                 }
                                 _ => (),
@@ -244,7 +372,7 @@ impl Module {
                         }
 
                         self.pop_symbol();
-                    } else {
+                    } else if let CodeGenPass::Values = &*self.code_gen_pass.borrow() {
                         self.current_symbol.borrow_mut().push(name.clone());
 
                         let potato = {

@@ -11,6 +11,7 @@ use dsl_symbol::{Symbol, SymbolValue, Value};
 
 pub enum CodeGenPass {
     Symbols,
+    SymbolsSpecialization,
     Values,
 }
 
@@ -65,6 +66,8 @@ impl Module {
     }
 
     pub fn gen(&self) {
+        self.gen_parse_node(&self.ast);
+        self.code_gen_pass.replace(CodeGenPass::SymbolsSpecialization);
         self.gen_parse_node(&self.ast);
         self.code_gen_pass.replace(CodeGenPass::Values);
         self.gen_parse_node(&self.ast);

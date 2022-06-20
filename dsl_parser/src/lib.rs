@@ -941,6 +941,22 @@ fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
 
         let type_param = expect(tokens, TokenKind::Ident("".to_string()))?;
 
+        let specialization= if let Some(Token {
+            token_type:
+                TokenKind::Operator(Operator {
+                    operator: OperatorKind::As,
+                    ..
+                }),
+            ..
+        }) = tokens.current()
+        {
+            let as_tok = expect(tokens, Operator::create_expect(OperatorKind::As))?;
+            let ty = parse_type(tokens)?;
+            Some(ty)
+        } else {
+            None
+        };
+
         let constraints = if let Some(Token {
             token_type: TokenKind::Colon,
             ..
@@ -950,7 +966,7 @@ fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
         } else {
             None
         };
-        generic_params.push((type_param.clone(), constraints));
+        generic_params.push((type_param.clone(), constraints, specialization));
 
         match tokens.current() {
             Some(t) => match t.token_type {

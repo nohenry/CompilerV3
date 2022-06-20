@@ -1,3 +1,5 @@
+#![feature(let_else)]
+
 mod expression;
 mod literal;
 pub mod module;

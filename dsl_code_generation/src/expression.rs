@@ -455,7 +455,8 @@ impl Module {
                     path,
                     ty,
                     ty_params,
-                    types,
+                    existing,
+                    specialization,
                 } = &expr
                 {
                     let old_block = self.current_block.take();
@@ -466,6 +467,7 @@ impl Module {
 
                     let mut fn_types = vec![];
 
+                    // Generate type arguments
                     {
                         let mut sym = self.symbol_root.borrow_mut();
                         let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
@@ -519,30 +521,86 @@ impl Module {
                         }
                     }
 
-                    let found = types.iter().find(|(f, _)| *f == &fn_types);
+                    let specialization = specialization.iter().find(|(f, _)| {
+                        for (a, b) in f.iter().zip(fn_types.iter()) {
+                            if a == "" {
+                                return true;
+                            } else if a != b {
+                                return false;
+                            } else {
+                                return true;
+                            }
+                        }
+                        true
+                    });
+                    let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
 
                     let name = if let Some(last) = path.last() {
-                        if let Some(ty) = found {
+                        if let Some(ty) = existing_impl {
                             Some(ty.1.last().unwrap().clone())
                         } else {
+                            let (return_type, types) = if let Some(special) = specialization {
+                                let mut sym = self.symbol_root.borrow();
+                                let current = self.get_symbol(&mut sym, &special.1);
+
+                                if let Some(Symbol {
+                                    value:
+                                        SymbolValue::Funtion(Value::FunctionTemplate {
+                                            body, ty, ..
+                                        }),
+                                    ..
+                                }) = current
+                                {
+                                    let return_type = self.gen_type(&ty.return_type);
+
+                                    let types: Vec<(String, Type)> = ty
+                                        .parameters
+                                        .iter()
+                                        .map(|f| {
+                                            (
+                                                cast!(&f.symbol.token_type, TokenKind::Ident)
+                                                    .clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            )
+                                        })
+                                        .collect();
+                                    (return_type, types)
+                                } else {
+                                    let return_type = self.gen_type(&ty.return_type);
+
+                                    let types: Vec<(String, Type)> = ty
+                                        .parameters
+                                        .iter()
+                                        .map(|f| {
+                                            (
+                                                cast!(&f.symbol.token_type, TokenKind::Ident)
+                                                    .clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            )
+                                        })
+                                        .collect();
+                                    (return_type, types)
+                                }
+                            } else {
+                                let return_type = self.gen_type(&ty.return_type);
+
+                                let types: Vec<(String, Type)> = ty
+                                    .parameters
+                                    .iter()
+                                    .map(|f| {
+                                        (
+                                            cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
+                                            self.gen_type(&f.symbol_type),
+                                        )
+                                    })
+                                    .collect();
+                                (return_type, types)
+                            };
                             let path = &path[..path.len() - 1];
                             let name = self.get_next_name(path, last.clone());
 
                             let mut typesda = Vec::from(path);
                             typesda.push(name.clone());
-
-                            let return_type = self.gen_type(&ty.return_type);
-
-                            let types: Vec<(String, Type)> = ty
-                                .parameters
-                                .iter()
-                                .map(|f| {
-                                    (
-                                        cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
-                                        self.gen_type(&f.symbol_type),
-                                    )
-                                })
-                                .collect();
 
                             let function_type = self.builder.get_fn(return_type.clone(), &types);
 
@@ -617,7 +675,25 @@ impl Module {
                                 ty => Some(check!(self, self.builder.create_alloc(&ty), Value)),
                             };
 
-                            let val = self.gen_parse_node(body.as_ref());
+                            let val = if let Some(special) = specialization {
+                                let mut sym = self.symbol_root.borrow();
+                                let current = self.get_symbol(&mut sym, &special.1);
+
+                                if let Some(Symbol {
+                                    value:
+                                        SymbolValue::Funtion(Value::FunctionTemplate {
+                                            body, ty, ..
+                                        }),
+                                    ..
+                                }) = current
+                                {
+                                    self.gen_parse_node(body.as_ref())
+                                } else {
+                                    self.gen_parse_node(body.as_ref())
+                                }
+                            } else {
+                                self.gen_parse_node(body.as_ref())
+                            };
 
                             if let Some(alloc) = alloc {
                                 if val.has_value() {
@@ -650,11 +726,11 @@ impl Module {
                         // let mut sym = self.symbol_root.borrow_mut();
                         let fn_templ = self.get_symbol_mut(&mut sym, &path);
                         if let Some(Symbol {
-                            value: SymbolValue::Funtion(Value::FunctionTemplate { types, .. }),
+                            value: SymbolValue::Funtion(Value::FunctionTemplate { existing, .. }),
                             ..
                         }) = fn_templ
                         {
-                            types.insert(fn_types, npath.clone());
+                            existing.insert(fn_types, npath.clone());
                         }
 
                         let current = self.get_symbol_mut(&mut sym, &npath);
