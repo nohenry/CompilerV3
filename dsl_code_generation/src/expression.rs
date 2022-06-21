@@ -1,14 +1,12 @@
 use dsl_errors::{check, CodeGenError};
 use llvm_sys::core::LLVMGetParam;
-use llvm_sys::{
-    LLVMGetInsertPoint, LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetInsertPoint,
-};
+use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
     BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
     LoopExpression, UnaryExpression,
 };
-use dsl_lexer::{OperatorKind, Token, TokenKind};
+use dsl_lexer::{OperatorKind, TokenKind};
 use dsl_util::cast;
 
 use super::module::Module;
@@ -29,7 +27,11 @@ impl Module {
                         let left = self.gen_expression(left);
                         let right = self.gen_expression(right);
 
-                        check!(self, self.builder.create_store(&left, &right), Value);
+                        check!(
+                            self,
+                            self.builder.create_store(&left, &right, self.module),
+                            Value
+                        );
 
                         return Value::Empty;
                     }
@@ -142,7 +144,11 @@ impl Module {
 
                         let op =
                             check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
-                        check!(self, self.builder.create_store(&left, &op), Value);
+                        check!(
+                            self,
+                            self.builder.create_store(&left, &op, self.module),
+                            Value
+                        );
 
                         // load modify and store value for op=
                         return Value::Empty;
@@ -697,7 +703,11 @@ impl Module {
 
                             if let Some(alloc) = alloc {
                                 if val.has_value() {
-                                    check!(self, self.builder.create_store(&alloc, &val), Value);
+                                    check!(
+                                        self,
+                                        self.builder.create_store(&alloc, &val, self.module),
+                                        Value
+                                    );
                                 }
 
                                 check!(self, self.builder.create_ret(&alloc), Value);

@@ -1,14 +1,16 @@
 use std::{collections::HashMap, fmt::Display};
 
+use dsl_errors::CodeGenError;
 use dsl_lexer::ast::{FunctionSignature, ParseNode};
-use dsl_util::{CreateParent, TreeDisplay, NULL_STR};
+use dsl_util::{CreateParent, Grouper, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
-        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMGetIntTypeWidth, LLVMGetTypeKind, LLVMPointerType,
-        LLVMVoidType,
+        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMGetAlignment, LLVMGetIntTypeWidth, LLVMGetTypeKind,
+        LLVMPointerType, LLVMVoidType,
     },
-    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMTypeRef, LLVMValueRef},
+    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
+    LLVMGetTypeSize,
 };
 
 #[derive(Debug, Clone)]
@@ -40,6 +42,14 @@ pub enum Value {
         existing: HashMap<Vec<String>, Vec<String>>,
         specialization: HashMap<Vec<String>, Vec<String>>,
     },
+    Template {
+        llvm_value: LLVMValueRef,
+        template_type: Type,
+    },
+    TemplateFields {
+        fields: HashMap<String, Value>,
+        template_type: Type,
+    },
     Instruction {
         llvm_value: LLVMValueRef,
     },
@@ -64,6 +74,8 @@ impl Value {
             Self::Literal { literal_type, .. } => literal_type,
             Self::Variable { variable_type, .. } => variable_type,
             Self::Function { function_type, .. } => function_type,
+            Self::Template { template_type, .. } => template_type,
+            Self::TemplateFields { template_type, .. } => template_type,
             Self::Load { load_type, .. } => load_type,
             Self::Empty
             | Self::Instruction { .. }
@@ -88,13 +100,17 @@ impl Value {
         }
     }
 
-    pub fn get_value(&self, builder: LLVMBuilderRef) -> Result<LLVMValueRef, ()> {
+    pub fn get_value(&self, builder: LLVMBuilderRef) -> Result<LLVMValueRef, CodeGenError> {
         match self {
             Value::Empty
             | Value::Instruction { .. }
             | Value::Block { .. }
-            | Value::FunctionTemplate { .. } => Err(()),
+            | Value::FunctionTemplate { .. }
+            | Value::TemplateFields { .. } => Err(CodeGenError {
+                message: "Value didn't contain any usable data!".into(),
+            }),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
+            Value::Template { llvm_value, .. } => Ok(*llvm_value),
             Value::Variable {
                 llvm_value,
                 variable_type,
@@ -109,6 +125,35 @@ impl Value {
             Value::Literal { llvm_value, .. } => Ok(*llvm_value),
             Value::Load { llvm_value, .. } => Ok(*llvm_value),
         }
+    }
+
+    pub fn get_raw_value(&self) -> Result<LLVMValueRef, CodeGenError> {
+        match self {
+            Value::Empty
+            | Value::Instruction { .. }
+            | Value::Block { .. }
+            | Value::FunctionTemplate { .. }
+            | Value::TemplateFields { .. } => Err(CodeGenError {
+                message: "Value didn't contain any usable data!".into(),
+            }),
+            Value::Function { llvm_value, .. } => Ok(*llvm_value),
+            Value::Template { llvm_value, .. } => Ok(*llvm_value),
+            Value::Variable { llvm_value, .. } => Ok(*llvm_value),
+            Value::Literal { llvm_value, .. } => Ok(*llvm_value),
+            Value::Load { llvm_value, .. } => Ok(*llvm_value),
+        }
+    }
+
+    pub fn get_alignment(&self) -> Result<u32, CodeGenError> {
+        let val = self.get_raw_value()?;
+        let align = unsafe { LLVMGetAlignment(val) };
+        Ok(align)
+    }
+
+    pub fn get_size(&self, module: LLVMModuleRef) -> Result<u64, CodeGenError> {
+        let ty = self.get_type().get_type();
+        let size = unsafe { LLVMGetTypeSize(module, ty) };
+        Ok(size)
     }
 
     pub fn weak_cast(&self, to_type: &Type, builder: LLVMBuilderRef) -> Result<Value, bool> {
@@ -156,6 +201,8 @@ impl Display for Value {
             Value::Literal { literal_type, .. } => write!(f, "{}", literal_type),
             Value::Variable { variable_type, .. } => write!(f, "{}", variable_type),
             Value::Function { function_type, .. } => write!(f, "{}", function_type),
+            Value::Template { template_type, .. } => write!(f, "{}", template_type),
+            Value::TemplateFields { template_type, .. } => write!(f, "{}", template_type),
             Value::Load { load_type, .. } => write!(f, "{}", load_type),
             Value::Instruction { .. } => write!(f, "Instruction"),
             Value::Block { .. } => write!(f, "Block"),
@@ -171,6 +218,7 @@ impl TreeDisplay for Value {
             Value::Literal { literal_type, .. } => literal_type.num_children(),
             Value::Variable { variable_type, .. } => variable_type.num_children(),
             Value::Function { function_type, .. } => function_type.num_children(),
+            Value::Template { template_type, .. } => template_type.num_children(),
             Value::Load { load_type, .. } => load_type.num_children(),
             _ => 0,
         }
@@ -181,6 +229,7 @@ impl TreeDisplay for Value {
             Value::Literal { literal_type, .. } => literal_type.child_at(index),
             Value::Variable { variable_type, .. } => variable_type.child_at(index),
             Value::Function { function_type, .. } => function_type.child_at(index),
+            Value::Template { template_type, .. } => template_type.child_at(index),
             Value::Load { load_type, .. } => load_type.child_at(index),
             _ => panic!(),
         }
@@ -230,6 +279,10 @@ pub enum Type {
         parameters: LinkedHashMap<String, Type>,
         return_type: Box<Type>,
     },
+    Template {
+        llvm_type: LLVMTypeRef,
+        fields: LinkedHashMap<String, Type>,
+    },
 }
 
 impl Type {
@@ -251,6 +304,7 @@ impl Type {
             Self::Unit { llvm_type, .. } => *llvm_type,
             Self::Reference { llvm_type, .. } => *llvm_type,
             Self::Function { llvm_type, .. } => unsafe { LLVMPointerType(*llvm_type, 0) },
+            Self::Template { llvm_type, .. } => *llvm_type,
             Self::Empty => panic!("Called on unkown value!"),
         }
     }
@@ -319,6 +373,9 @@ impl Display for Type {
             }
             Self::String { .. } => {
                 write!(f, "string")
+            }
+            Self::Template { .. } => {
+                write!(f, "")
             } // Self::(GenericType {
               //     arguments,
               //     base_type,
@@ -341,6 +398,7 @@ impl TreeDisplay for Type {
             Type::Array { .. } => 1,
             Type::Reference { .. } => 1,
             Type::Function { parameters, .. } => parameters.len() + 1,
+            Type::Template { fields, .. } => fields.len(),
             _ => 0,
         }
     }
@@ -351,6 +409,7 @@ impl TreeDisplay for Type {
             Type::Reference { base_type, .. } => Some(base_type.as_ref()),
             Type::Function { return_type, .. } if index == 0 => Some(return_type.as_ref()),
             Type::Function { .. } => None,
+            Type::Template { .. } => None,
             _ => panic!(),
         }
     }
@@ -361,6 +420,11 @@ impl TreeDisplay for Type {
                 parameters.keys().nth(index - 1).unwrap().clone(),
                 vec![parameters.values().nth(index - 1).unwrap()],
             )),
+            Type::Template { fields, .. } => Box::new(Grouper(format!(
+                "{}: {}",
+                fields.keys().nth(index).unwrap(),
+                fields.values().nth(index).unwrap()
+            ))),
             _ => panic!(),
         }
     }

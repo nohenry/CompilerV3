@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::ffi::CStr;
 
 use dsl_errors::{check, CodeGenError};
 use linked_hash_map::LinkedHashMap;
-use llvm_sys::core::LLVMGetParam;
+use llvm_sys::core::{LLVMGetAllocatedType, LLVMGetParam, LLVMPrintTypeToString, LLVMTypeOf};
+use llvm_sys::LLVMSetAllocatedType;
 
 use dsl_lexer::ast::{
-    FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TypeSymbol,
-    VariableDecleration,
+    FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TemplateDecleration,
+    TypeSymbol, VariableDecleration,
 };
 use dsl_lexer::TokenKind;
 use dsl_util::cast;
@@ -22,54 +24,101 @@ impl Module {
             ParseNode::Expression(e, _) => {
                 return self.gen_expression(e);
             }
+            ParseNode::TemplateDecleration(TemplateDecleration {
+                fields,
+                generic,
+                token,
+                ..
+            }) => {
+                let name = cast!(&token.token_type, TokenKind::Ident);
+
+                match &*self.code_gen_pass.borrow() {
+                    CodeGenPass::Symbols => {
+                        let template = check!(self, self.builder.create_struct_named(name), Value);
+                        self.add_and_set_symbol(&name, SymbolValue::Template(template));
+
+                        self.pop_symbol();
+                    }
+                    CodeGenPass::Values => {
+                        let mut root_sym = self.symbol_root.borrow_mut();
+                        let current =
+                            self.get_symbol_mut(&mut root_sym, &self.current_symbol.borrow());
+                        if let Some(Symbol { children, .. }) = current {
+                            if let Some(Symbol {
+                                value: SymbolValue::Template(ty),
+                                children,
+                                ..
+                            }) = children.get_mut(name)
+                            {
+                                let mut vars = LinkedHashMap::new();
+
+                                let types: Vec<_> = fields
+                                    .iter()
+                                    .map(|f| self.gen_type(&f.symbol_type))
+                                    .collect();
+
+                                for (f, ty) in fields.iter().zip(types.iter()) {
+                                    let name = cast!(&f.symbol.token_type, TokenKind::Ident);
+                                    vars.insert(name.clone(), ty.clone());
+
+                                    children.insert(
+                                        name.clone(),
+                                        Symbol {
+                                            name: name.clone(),
+                                            value: SymbolValue::Field(ty.clone()),
+                                            children: HashMap::new(),
+                                        },
+                                    );
+                                }
+
+                                self.builder.set_struct_body(ty, vars);
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
             ParseNode::VariableDecleration(VariableDecleration {
                 identifier,
                 possible_initializer,
                 variable_type,
                 ..
             }) => {
+                match &*self.code_gen_pass.borrow() {
+                    CodeGenPass::Values => (),
+                    _ => return Value::Empty,
+                }
                 let place_var = if let Some((init, ..)) = possible_initializer {
-                    let alloc_block = check!(
+                    // let alloc_block = check!(
+                    //     self,
+                    //     self.builder.append_block(&self.current_function.borrow()),
+                    //     Value
+                    // );
+                    // let expr = check!(
+                    //     self,
+                    //     self.builder.append_block(&self.current_function.borrow()),
+                    //     Value
+                    // );
+                    let mut alloc = check!(
                         self,
-                        self.builder.append_block(&self.current_function.borrow()),
+                        self.builder.create_alloc(&self.builder.get_unit()),
                         Value
                     );
-                    let expr = check!(
-                        self,
-                        self.builder.append_block(&self.current_function.borrow()),
-                        Value
-                    );
 
-                    let end = check!(self, self.builder.create_block(), Value);
+                    // let end = check!(self, self.builder.create_block(), Value);
 
-                    check!(self, self.builder.create_branch(&alloc_block), Value);
+                    // check!(self, self.builder.create_branch(&alloc_block), Value);
 
-                    self.builder.set_position_end(&expr);
+                    // self.builder.set_position_end(&alloc_block);
 
-                    self.current_block.replace(expr);
+                    // self.builder.set_position_end(&alloc_block);
+                    // self.current_block.replace(alloc_block);
                     let value = check!(self.gen_expression(init.as_ref()));
-                    check!(self, self.builder.create_branch(&end), Value);
 
-                    self.builder.set_position_end(&alloc_block);
+                    // check!(self, self.builder.create_branch(&end), Value);
 
                     if let Some(ty) = variable_type {
                         let ty = self.gen_type(ty.as_ref());
-                        let var = check!(self, self.builder.create_alloc(&ty), Value);
-
-                        check!(
-                            self,
-                            self.builder.create_branch(&self.current_block.borrow()),
-                            Value
-                        );
-
-                        check!(
-                            self,
-                            self.builder
-                                .append_existing_block(&self.current_function.borrow(), &end),
-                            Value
-                        );
-
-                        self.builder.set_position_end(&end);
 
                         let nty = value.weak_cast(&ty, self.builder.get_builder());
                         let val = match nty {
@@ -84,30 +133,27 @@ impl Module {
                             Ok(v) => v,
                         };
 
-                        check!(self, self.builder.create_store(&var, &&val), Value);
-
-                        var
-                    } else {
-                        let var = check!(self, self.builder.create_alloc(&value.get_type()), Value);
                         check!(
                             self,
-                            self.builder.create_branch(&self.current_block.borrow()),
+                            self.builder.create_store(&alloc, &&val, self.module),
                             Value
                         );
-
+                    } else {
                         check!(
                             self,
                             self.builder
-                                .append_existing_block(&self.current_function.borrow(), &end),
+                                .set_allocated_type(&mut alloc, self.module, &value, value.get_type()),
                             Value
                         );
 
-                        self.builder.set_position_end(&end);
-
-                        check!(self, self.builder.create_store(&var, &value), Value);
-
-                        var
+                        check!(
+                            self,
+                            self.builder.create_store(&alloc, &value, self.module),
+                            Value
+                        );
                     }
+
+                    alloc
                 } else {
                     if let Some(ty) = variable_type {
                         let ty = self.gen_type(ty.as_ref());
@@ -265,7 +311,7 @@ impl Module {
                         let mut cur_sym = self.symbol_root.borrow_mut();
                         let current = self.get_symbol_mut(&mut cur_sym, &path);
 
-                        let mut npath = Vec::from(&path[..path.len() -1]);
+                        let mut npath = Vec::from(&path[..path.len() - 1]);
                         npath.push(name.clone());
 
                         let types = ty_params
@@ -471,7 +517,11 @@ impl Module {
 
                             if let Some(alloc) = alloc {
                                 if val.has_value() {
-                                    check!(self, self.builder.create_store(&alloc, &val), Value);
+                                    check!(
+                                        self,
+                                        self.builder.create_store(&alloc, &val, self.module),
+                                        Value
+                                    );
                                 }
 
                                 check!(self, self.builder.create_ret(&alloc), Value);

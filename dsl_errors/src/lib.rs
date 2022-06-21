@@ -36,9 +36,11 @@ impl ParseError {
     }
 }
 
+#[derive(Debug)]
 pub struct CodeGenError {
     pub message: String,
 }
+
 
 #[macro_export]
 macro_rules! check {

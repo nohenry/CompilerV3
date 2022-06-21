@@ -1,17 +1,8 @@
-
-value<T, U>(a: T, b: U): T => {
-    a
+template Data {
+    x: int32
+    y: int32
 }
 
-value<T as bool, U>(a: T, b: U): T => {
-    if a == true {
-        false
-    } else {
-        true 
-    }
-}
-
-main() => {
-    value(true, 4)
-    value(false, 0)
+main(d: int32) => {
+    let a = [5, 6, 7]
 }

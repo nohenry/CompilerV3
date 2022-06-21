@@ -1,9 +1,11 @@
-use llvm_sys::core::{
-    LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMConstString, LLVMFloatType,
-    LLVMInt1Type, LLVMInt32Type,
-};
+use std::collections::HashMap;
 
-use dsl_lexer::ast::{ArrayInitializer, Literal};
+use llvm_sys::{core::{
+    LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMConstString, 
+    LLVMFloatType, LLVMInt1Type, LLVMInt32Type,
+}};
+
+use dsl_lexer::ast::{ArrayInitializer, Literal, TemplateInitializer};
 
 use super::module::Module;
 use dsl_symbol::{Type, Value};
@@ -90,6 +92,77 @@ impl Module {
                     length: s.len(),
                 },
             },
+            Literal::StructInitializer(TemplateInitializer {
+                initializer_values,
+                named_type,
+                ..
+            }) => {
+                if let Some(ty) = named_type {
+                    let ty = self.gen_type(ty.as_ref());
+
+                    let vals: Vec<_> = initializer_values
+                        .iter()
+                        .map(|f| (f.0.clone(), self.gen_expression(&f.1)))
+                        .collect();
+
+                    let field_inits= if let Type::Template { fields, .. } = &ty {
+                        let vvv: Option<Vec<(String, Value)>> = vals.into_iter().map(|(name, val)| {
+
+                            let res = fields.get(&name);
+                            let mut str_val = None;
+                            if let Some(field) = res {
+                                let value = val.weak_cast(field, self.builder.get_builder());
+                                match value {
+                                    Ok(val) => str_val = Some((name, val)),
+                                    Err(false) => str_val = Some((name, val)),
+                                    Err(true) => {self.add_error(format!(
+                                        "Type provided for field `{}` does not match that of template!",
+                                        name, 
+                                    ));},
+                                };
+                            } else {
+                                self.add_error(format!("Unexpected field initializer `{}`", name))
+                            }
+                            str_val
+                        }).collect();
+                        vvv
+                    } else {
+                        None
+                    };
+
+                    if let Some(init) = field_inits {
+                        let mut hsh = HashMap::new();
+                        for f in init {
+                            hsh.insert(f.0, f.1);
+                        }
+                        Value::TemplateFields {
+                            fields: hsh,
+                            template_type: ty
+                        }
+                    //     let llvm_fields: Result<Vec<LLVMValueRef>, CodeGenError> = init.iter().map(|f| f.get_raw_value()).collect();
+                    //     let mut llvm_fields = check!(self, llvm_fields, Value);
+                    // let llvm_value = unsafe {
+                    //     LLVMConstNamedStruct(ty.get_type(), llvm_fields.as_mut_ptr(), llvm_fields.len().try_into().unwrap())
+                    // };
+                    // let llvm_value = unsafe {
+                    //     let glb = LLVM(self.module, ty.get_type(), NULL_STR);
+                    //     LLVMSetInitializer(glb, llvm_value);
+                    //     glb
+                    // };
+                    //  Value::Template {
+                    //     llvm_value,
+                    //     template_type: ty.clone()
+                    // }
+                    } else {
+                        Value::Empty
+                    }
+
+
+                } else {
+                    // TODO: Handle idk hash map or something
+                    Value::Empty
+                }
+            }
             _ => {
                 self.add_error(String::from("Unsupported literal"));
                 Value::Empty

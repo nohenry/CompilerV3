@@ -1,20 +1,26 @@
-use std::ffi::CString;
+use std::{
+    collections::HashMap,
+    ffi::{CStr, CString},
+};
 
-use conv::ApproxInto;
+use conv::{ApproxInto, UnwrapOrInf};
 use dsl_errors::CodeGenError;
 use dsl_util::NULL_STR;
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
         LLVMAddFunction, LLVMAddIncoming, LLVMAppendBasicBlock, LLVMAppendExistingBasicBlock,
-        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr,
-        LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2, LLVMBuildNeg,
-        LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildStore, LLVMConstInt, LLVMConstReal,
-        LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetGlobalContext, LLVMInt64Type,
-        LLVMPointerType, LLVMPositionBuilder, LLVMPositionBuilderAtEnd,
+        LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2,
+        LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
+        LLVMBuildMemCpy, LLVMBuildNeg, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
+        LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
+        LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetAlignment, LLVMGetGlobalContext,
+        LLVMInt1Type, LLVMInt64Type, LLVMInt8Type, LLVMPointerType, LLVMPositionBuilder,
+        LLVMPositionBuilderAtEnd, LLVMPrintTypeToString, LLVMStructCreateNamed, LLVMStructSetBody,
+        LLVMTypeOf,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
-    LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate,
+    LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetAllocatedType,
 };
 
 use dsl_symbol::{Type, Value};
@@ -56,6 +62,19 @@ impl IRBuilder {
         Type::Integer {
             llvm_type: unsafe { LLVMInt64Type() },
             signed: false,
+        }
+    }
+
+    pub fn get_uint_8(&self) -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt8Type() },
+            signed: false,
+        }
+    }
+
+    pub fn get_unit(&self) -> Type {
+        Type::Unit {
+            llvm_type: unsafe { LLVMInt1Type() },
         }
     }
 
@@ -141,10 +160,16 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_store(&self, ptr: &Value, value: &Value) -> Result<Value, CodeGenError> {
+    pub fn create_store(
+        &self,
+        ptr: &Value,
+        value: &Value,
+        module: LLVMModuleRef,
+    ) -> Result<Value, CodeGenError> {
         match ptr {
             Value::Variable {
                 llvm_value: ptr_value,
+                variable_type,
                 ..
             } => match value {
                 Value::Literal {
@@ -174,6 +199,32 @@ impl IRBuilder {
                         unsafe { LLVMBuildStore(self.builder, *llvm_value, *ptr_value) };
                     Ok(Value::Instruction { llvm_value })
                 }
+                template @ Value::Template { .. } => {
+                    let vcal = self.create_bitcast(&template, &self.get_ptr(&self.get_uint_8()))?;
+                    self.create_memcpy(ptr, &vcal, module)
+                }
+                Value::TemplateFields {
+                    fields: init_fields,
+                    ..
+                } => match variable_type {
+                    Type::Template { fields, .. } => {
+                        for field in init_fields {
+                            let pos = fields.keys().position(|f| f == field.0).unwrap();
+
+                            let ptr = self.create_struct_gep(
+                                ptr,
+                                variable_type.clone(),
+                                pos.try_into().unwrap(),
+                            )?;
+
+                            self.create_store(&ptr, &field.1, module)?;
+                        }
+                        Ok(Value::Empty)
+                    }
+                    _ => Err(CodeGenError {
+                        message: "Mismatched types in template initializer".into(),
+                    }),
+                },
                 _ => Err(CodeGenError {
                     message: format!("Unable to store value"),
                 }),
@@ -458,6 +509,46 @@ impl IRBuilder {
         }
     }
 
+    pub fn create_struct_gep(
+        &self,
+        ptr: &Value,
+        base_type: Type,
+        index: u32,
+    ) -> Result<Value, CodeGenError> {
+        match ptr {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => {
+                // let mut ind: Vec<_> = indicies
+                //     .iter()
+                //     .filter_map(|i| match i {
+                //         Value::Variable { llvm_value, .. } => Some(*llvm_value),
+                //         Value::Literal { llvm_value, .. } => Some(*llvm_value),
+                //         _ => None,
+                //     })
+                //     .collect();
+
+                let value = unsafe {
+                    LLVMBuildStructGEP2(
+                        self.builder,
+                        variable_type.get_type(),
+                        *llvm_value,
+                        index,
+                        NULL_STR,
+                    )
+                };
+                Ok(Value::Variable {
+                    llvm_value: value,
+                    variable_type: base_type,
+                })
+            }
+            _ => Err(CodeGenError {
+                message: format!("Trying to index non pointer like value"),
+            }),
+        }
+    }
+
     pub fn create_cbranch(
         &self,
         condition: &Value,
@@ -560,15 +651,9 @@ impl IRBuilder {
                     .collect();
                 let args = res?;
 
-                let mut fargs: Result<Vec<LLVMValueRef>, ()> =
+                let fargs: Result<Vec<LLVMValueRef>, CodeGenError> =
                     args.iter().map(|f| f.get_value(self.builder)).collect();
-                let fargs = if let Ok(args) = &mut fargs {
-                    args
-                } else {
-                    return Err(CodeGenError {
-                        message: format!("Unable to resolve function call parameters"),
-                    });
-                };
+                let mut fargs = fargs?;
 
                 Ok(Value::Literal {
                     llvm_value: LLVMBuildCall2(
@@ -767,5 +852,130 @@ impl IRBuilder {
                 })
             }
         }
+    }
+
+    pub fn create_struct_named(&self, name: &String) -> Result<Type, CodeGenError> {
+        let name = CString::new(name.as_str()).unwrap();
+        let value = unsafe { LLVMStructCreateNamed(LLVMGetGlobalContext(), name.as_ptr()) };
+
+        Ok(Type::Template {
+            llvm_type: value,
+            fields: LinkedHashMap::new(),
+        })
+    }
+
+    pub fn set_struct_body(&self, struc: &mut Type, fields: LinkedHashMap<String, Type>) {
+        let mut field_types: Vec<_> = fields.values().map(|f| f.get_type()).collect();
+
+        match struc {
+            Type::Template {
+                llvm_type,
+                fields: flds,
+            } => unsafe {
+                LLVMStructSetBody(
+                    *llvm_type,
+                    field_types.as_mut_ptr(),
+                    field_types.len().try_into().unwrap(),
+                    0,
+                );
+
+                *flds = fields
+            },
+            _ => (),
+        }
+    }
+
+    pub fn create_struct(
+        &self,
+        name: &String,
+        fields: LinkedHashMap<String, Type>,
+    ) -> Result<Type, CodeGenError> {
+        let name = CString::new(name.as_str()).unwrap();
+        let mut field_types: Vec<_> = fields.values().map(|f| f.get_type()).collect();
+
+        let value = unsafe {
+            let ty = LLVMStructCreateNamed(LLVMGetGlobalContext(), name.as_ptr());
+
+            LLVMStructSetBody(
+                ty,
+                field_types.as_mut_ptr(),
+                field_types.len().try_into().unwrap(),
+                0,
+            );
+
+            ty
+        };
+
+        Ok(Type::Template {
+            llvm_type: value,
+            fields,
+        })
+    }
+
+    pub fn create_bitcast(&self, value: &Value, ty: &Type) -> Result<Value, CodeGenError> {
+        let value = value.get_raw_value()?;
+        let lty = ty.get_type();
+        let llvm_value = unsafe { LLVMBuildBitCast(self.builder, value, lty, NULL_STR) };
+
+        Ok(Value::Literal {
+            literal_type: ty.clone(),
+            llvm_value,
+        })
+    }
+
+    pub fn create_memcpy(
+        &self,
+        dest: &Value,
+        src: &Value,
+        module: LLVMModuleRef,
+    ) -> Result<Value, CodeGenError> {
+        let dsize = dest.get_size(module)?;
+        let ssize = src.get_size(module)?;
+        if dsize != ssize {
+            return Err(CodeGenError {
+                message: "Sizes in memcpy are not equal!".into(),
+            });
+        }
+        let size = self.create_literal(&self.get_uint_64(), dsize);
+        let llvm_value = unsafe {
+            LLVMBuildMemCpy(
+                self.builder,
+                dest.get_raw_value()?,
+                dest.get_alignment()?.try_into().unwrap(),
+                src.get_raw_value()?,
+                4.try_into().unwrap(),
+                // src.get_alignment()?.try_into().unwrap(),
+                size.get_raw_value()?,
+            )
+        };
+
+        Ok(Value::Instruction { llvm_value })
+    }
+
+    pub fn set_allocated_type(
+        &self,
+        alloc: &mut Value,
+        module: LLVMModuleRef,
+        src: &Value,
+        ty: &Type,
+    ) -> Result<(), CodeGenError> {
+        match alloc {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => {
+                unsafe {
+                    LLVMSetAllocatedType(*llvm_value, module, src.get_raw_value()?, ty.get_type());
+                }
+                *variable_type = ty.clone();
+            }
+            _ => {
+                return Err(CodeGenError {
+                    message: "Tried to set alloc inst type on non alloca instruction or value!"
+                        .into(),
+                })
+            }
+        }
+        Ok(())
     }
 }

@@ -3,22 +3,20 @@ source_filename = "test/test.c"
 target datalayout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-windows-msvc19.29.30140"
 
-$"??_C@_06PIJAEBPP@Ptoato?$AA@" = comdat any
-
-@p = dso_local global [3 x i32] [i32 5, i32 6, i32 7], align 4
-@"??_C@_06PIJAEBPP@Ptoato?$AA@" = linkonce_odr dso_local unnamed_addr constant [7 x i8] c"Ptoato\00", comdat, align 1
-
-; Function Attrs: noinline nounwind optnone uwtable
-define dso_local i32 @value() #0 {
-  ret i32 4
-}
-
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main(i32 %0) #0 {
   %2 = alloca i32, align 4
-  %3 = alloca i32*, align 8
+  %3 = alloca [4 x i32], align 16
   store i32 %0, i32* %2, align 4
-  store i32* bitcast ([7 x i8]* @"??_C@_06PIJAEBPP@Ptoato?$AA@" to i32*), i32** %3, align 8
+  %4 = getelementptr inbounds [4 x i32], [4 x i32]* %3, i64 0, i64 0
+  %5 = load i32, i32* %2, align 4
+  store i32 %5, i32* %4, align 4
+  %6 = getelementptr inbounds i32, i32* %4, i64 1
+  store i32 6, i32* %6, align 4
+  %7 = getelementptr inbounds i32, i32* %6, i64 1
+  store i32 7, i32* %7, align 4
+  %8 = getelementptr inbounds i32, i32* %7, i64 1
+  store i32 8, i32* %8, align 4
   ret i32 0
 }
 

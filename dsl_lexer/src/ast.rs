@@ -315,12 +315,6 @@ impl TreeDisplay for Expression {
     }
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub struct Expression {
-//     kind: ExpressionKind,
-//     range: Range,
-// }
-
 #[derive(Debug, Clone, PartialEq)]
 struct IdentSymbol {
     pub identifier: Token,
@@ -1117,7 +1111,7 @@ impl TreeDisplay for ArrayInitializer {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateInitializer {
     pub named_type: Option<Box<Type>>,
-    pub initializer_values: Vec<(String, Option<Expression>)>,
+    pub initializer_values: Vec<(String, Expression)>,
     pub range: Range,
 }
 
@@ -1157,38 +1151,22 @@ impl TreeDisplay for TemplateInitializer {
                 )),
                 _c => {
                     let (name, value) = &self.initializer_values[index - 2];
-                    if let Some(value) = value {
-                        Box::new(CreateParent(
-                            ColoredString::from(format!("{}", name).as_str())
-                                .green()
-                                .to_string(),
-                            vec![value],
-                        ))
-                    } else {
-                        Box::new(Grouper(
-                            ColoredString::from(format!("{}", name).as_str())
-                                .blue()
-                                .to_string(),
-                        ))
-                    }
+                    Box::new(CreateParent(
+                        ColoredString::from(format!("{}", name).as_str())
+                            .green()
+                            .to_string(),
+                        vec![value],
+                    ))
                 }
             }
         } else {
             let (name, value) = &self.initializer_values[index];
-            if let Some(value) = value {
-                Box::new(CreateParent(
-                    ColoredString::from(format!("{}", name).as_str())
-                        .green()
-                        .to_string(),
-                    vec![value],
-                ))
-            } else {
-                Box::new(Grouper(
-                    ColoredString::from(format!("{}", name).as_str())
-                        .blue()
-                        .to_string(),
-                ))
-            }
+            Box::new(CreateParent(
+                ColoredString::from(format!("{}", name).as_str())
+                    .green()
+                    .to_string(),
+                vec![value],
+            ))
         }
     }
 }
@@ -1263,6 +1241,13 @@ impl TreeDisplay for Literal {
         match self {
             Literal::Array(b) => b.child_at(index),
             Literal::StructInitializer(b) => b.child_at(index),
+            _ => panic!(),
+        }
+    }
+
+    fn child_at_bx<'a>(&'a self, index: usize) -> Box<dyn TreeDisplay + 'a> {
+        match self {
+            Literal::StructInitializer(b) => b.child_at_bx(index),
             _ => panic!(),
         }
     }

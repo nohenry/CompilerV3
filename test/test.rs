@@ -1,3 +1,11 @@
+struct Data {
+    x: u32,
+    y: u32,
+}
+
 fn main() {
-    let d = if std::env::args().len() == 2 { 5 } else { 6 };
+    let data = Data {
+        x: 5,
+        y: 7
+    };
 }

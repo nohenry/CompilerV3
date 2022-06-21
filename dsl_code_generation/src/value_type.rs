@@ -1,4 +1,4 @@
-use dsl_symbol::SymbolValue;
+use dsl_symbol::{Symbol, SymbolValue};
 use dsl_util::cast;
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::{
@@ -103,24 +103,38 @@ impl Module {
                 let str = cast!(&token.token_type, TokenKind::Ident);
 
                 let sym = self.symbol_root.borrow();
-                let current = self.get_symbol(&sym, &self.current_symbol.borrow());
+                {
+                    let current = self.get_symbol(&sym, &self.current_symbol.borrow());
 
-                if let Some(current) = current {
-                    if let Some(al_sym) = current.children.get(str) {
-                        let syysdf = al_sym;
-                        match &syysdf.value {
-                            SymbolValue::Generic(ty, bounds) => ty.clone(),
-                            _ => {
-                                self.add_error(format!("Unsupported type {:?}", c));
-                                dsl_symbol::Type::Empty
+                    if let Some(current) = current {
+                        if let Some(al_sym) = current.children.get(str) {
+                            let syysdf = al_sym;
+                            match &syysdf.value {
+                                SymbolValue::Generic(ty, bounds) => return ty.clone(),
+                                _ => {
+                                    self.add_error(format!("Unsupported type {:?}", c));
+                                    return dsl_symbol::Type::Empty;
+                                }
                             }
                         }
-                    } else {
-                        dsl_symbol::Type::Empty
                     }
-                } else {
-                    dsl_symbol::Type::Empty
                 }
+
+                if let Some(Symbol { value, .. }) =
+                    self.find_up_chain(&sym, &self.current_symbol.borrow(), str)
+                {
+                    match value {
+                        SymbolValue::Template(ty) => return ty.clone(),
+                        SymbolValue::Action(ty) => return ty.clone(),
+                        SymbolValue::Spec(ty) => return ty.clone(),
+                        _ => {
+                            self.add_error(format!("Unsupported type {:?}", c));
+                            return dsl_symbol::Type::Empty;
+                        }
+                    }
+                }
+
+                dsl_symbol::Type::Empty
             }
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));

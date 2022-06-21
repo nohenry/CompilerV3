@@ -941,7 +941,7 @@ fn parse_generic(tokens: &mut Cursor<&Token>) -> Result<ParseNode, ParseError> {
 
         let type_param = expect(tokens, TokenKind::Ident("".to_string()))?;
 
-        let specialization= if let Some(Token {
+        let specialization = if let Some(Token {
             token_type:
                 TokenKind::Operator(Operator {
                     operator: OperatorKind::As,
@@ -1142,9 +1142,9 @@ fn parse_template_initializer(
         }) = tokens.current()
         {
             tokens.move_next();
-            Some(parse_expression(tokens, 0)?)
+            parse_expression(tokens, 0)?
         } else {
-            None
+            Expression::Identifier(key.clone())
         };
         key_values.push((key_string, value));
 
