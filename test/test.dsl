@@ -4,5 +4,9 @@ template Data {
 }
 
 main(d: int32) => {
-    print("Hello World!")
+    let a = if d > 5 {
+        4
+    } else {
+        d + 4
+    }
 }

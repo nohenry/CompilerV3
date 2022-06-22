@@ -1,6 +1,10 @@
 use dsl_errors::{check, CodeGenError};
-use llvm_sys::core::LLVMGetParam;
-use llvm_sys::{LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate};
+use llvm_sys::core::{
+    LLVMBuildSelect, LLVMGetParam, LLVMInstructionRemoveFromParent, LLVMIsConstant,
+    LLVMPrintModuleToString,
+};
+use llvm_sys::target::LLVMGetModuleDataLayout;
+use llvm_sys::{LLVMIntPredicate, LLVMNumberOfChildrenInBlock, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
     BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
@@ -262,11 +266,7 @@ impl Module {
             }) => {
                 let condition = self.gen_expression(&condition);
 
-                let if_body = check!(
-                    self,
-                    self.builder.append_block(&self.current_function.borrow()),
-                    Value
-                );
+                let if_body = check!(self, self.builder.create_block(), Value);
 
                 if let Some((_, ec)) = else_clause {
                     let else_body = check!(self, self.builder.create_block(), Value);
@@ -291,57 +291,95 @@ impl Module {
                         self.jump_point.replace(end.clone());
                     }
 
-                    check!(
-                        self,
-                        self.builder
-                            .create_cbranch(&condition, &if_body, &else_body),
-                        Value
-                    );
-
                     self.builder.set_position_end(&if_body);
                     let if_ret = self.gen_parse_node(&body);
+                    let if_n = match if_body {
+                        Value::Block { llvm_value } => unsafe {
+                            LLVMNumberOfChildrenInBlock(llvm_value)
+                        },
+                        _ => 0,
+                    };
 
-                    check!(self, self.builder.create_branch(&end), Value);
-
-                    check!(
-                        self,
-                        self.builder
-                            .append_existing_block(&self.current_function.borrow(), &else_body),
-                        Value
-                    );
+                    // let p = unsafe {LLVMIsConstant(if_ret.get_raw_value().unwrap())};
+                    // println!("{}", p);
+                    let if_const = check!(self, self.builder.is_constant(&if_ret), Value);
 
                     self.builder.set_position_end(&else_body);
                     let else_ret = self.gen_parse_node(&ec);
+                    let else_n = match else_body {
+                        Value::Block { llvm_value } => unsafe {
+                            LLVMNumberOfChildrenInBlock(llvm_value)
+                        },
+                        _ => 0,
+                    };
 
-                    if empty {
+                    let else_const = check!(self, self.builder.is_constant(&if_ret), Value);
+
+                    if !(if_const && else_const && if_n == 0 && else_n == 0 || if_n <= 1 && else_n <= 1) {
+                        self.builder.set_position_end(&*self.current_block.borrow());
                         check!(
                             self,
                             self.builder
-                                .append_existing_block(&self.current_function.borrow(), &end),
+                                .create_cbranch(&condition, &if_body, &else_body),
                             Value
                         );
 
+                        self.builder.set_position_end(&if_body);
                         check!(self, self.builder.create_branch(&end), Value);
-                    }
 
-                    self.builder.set_position_end(&end);
+                        check!(
+                            self,
+                            self.builder
+                                .append_existing_block(&self.current_function.borrow(), &if_body),
+                            Value
+                        );
+                        check!(
+                            self,
+                            self.builder
+                                .append_existing_block(&self.current_function.borrow(), &else_body),
+                            Value
+                        );
+
+                        self.builder.set_position_end(&else_body);
+
+                        if empty {
+                            check!(
+                                self,
+                                self.builder
+                                    .append_existing_block(&self.current_function.borrow(), &end),
+                                Value
+                            );
+
+                            check!(self, self.builder.create_branch(&end), Value);
+                        }
+
+                        self.builder.set_position_end(&end);
+
+                        match (&if_ret, &else_ret) {
+                            (Value::Empty, Value::Empty) => (),
+                            (Value::Empty, _) => (),
+                            (_, Value::Empty) => (),
+                            (a, b) => {
+                                let p = check!(
+                                    self,
+                                    self.builder.create_phi(a, b, &if_body, &else_body),
+                                    Value
+                                );
+                                return p;
+                            }
+                        }
+                    } else {
+                        self.builder.set_position_end(&*self.current_block.borrow());
+
+                        return check!(
+                            self,
+                            self.builder.create_select(&condition, &if_ret, &else_ret),
+                            Value
+                        );
+                    }
 
                     if empty {
                         self.jump_point.replace(Value::Empty);
-                    }
-
-                    match (&if_ret, &else_ret) {
-                        (Value::Empty, Value::Empty) => (),
-                        (Value::Empty, _) => (),
-                        (_, Value::Empty) => (),
-                        (a, b) => {
-                            let p = check!(
-                                self,
-                                self.builder.create_phi(a, b, &if_body, &else_body),
-                                Value
-                            );
-                            return p;
-                        }
                     }
                 } else {
                     let (end, empty) = match &*self.jump_point.borrow() {
@@ -647,7 +685,7 @@ impl Module {
                                         if let Ok(p) = self
                                             .current_function
                                             .borrow()
-                                            .get_value(self.builder.get_builder())
+                                            .get_value(self.builder.get_builder(), self.module)
                                         {
                                             LLVMGetParam(p, i.try_into().unwrap())
                                         } else {

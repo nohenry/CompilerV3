@@ -53,7 +53,7 @@ impl Module {
             current_block: Rc::new(RefCell::new(Value::Empty)),
             current_function: Rc::new(RefCell::new(Value::Empty)),
             jump_point: Rc::new(RefCell::new(Value::Empty)),
-            builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }),
+            builder: IRBuilder::new(unsafe { LLVMCreateBuilder() }, module),
             errors: Rc::new(RefCell::new(vec![])),
             symbol_root: refr,
             current_symbol: Rc::new(RefCell::new(vec![name.clone()])),

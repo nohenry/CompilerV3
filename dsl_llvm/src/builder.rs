@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    ffi::{CStr, CString},
-};
+use std::ffi::CString;
 
-use conv::{ApproxInto, UnwrapOrInf};
+use conv::ApproxInto;
 use dsl_errors::CodeGenError;
 use dsl_util::NULL_STR;
 use linked_hash_map::LinkedHashMap;
@@ -13,25 +10,32 @@ use llvm_sys::{
         LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2,
         LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
         LLVMBuildMemCpy, LLVMBuildNeg, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
-        LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
-        LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetAlignment, LLVMGetGlobalContext,
-        LLVMInt1Type, LLVMInt64Type, LLVMInt8Type, LLVMPointerType, LLVMPositionBuilder,
-        LLVMPositionBuilderAtEnd, LLVMPrintTypeToString, LLVMStructCreateNamed, LLVMStructSetBody,
-        LLVMTypeOf, LLVMVoidType,
+        LLVMBuildSelect, LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
+        LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetGlobalContext, LLVMInt1Type,
+        LLVMInt64Type, LLVMInt8Type, LLVMIsConstant, LLVMPointerType, LLVMPositionBuilder,
+        LLVMPositionBuilderAtEnd, LLVMStructCreateNamed, LLVMStructSetBody, LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
-    LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetAllocatedType,
+    target::LLVMGetModuleDataLayout,
+    LLVMBuildAlignedLoad, LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetAllocatedType,
 };
 
 use dsl_symbol::{Type, Value};
 
+use crate::target_data::TargetData;
+
 pub struct IRBuilder {
     builder: LLVMBuilderRef,
+    module: LLVMModuleRef,
 }
 
 impl IRBuilder {
-    pub fn new(builder: LLVMBuilderRef) -> IRBuilder {
-        IRBuilder { builder }
+    pub fn new(builder: LLVMBuilderRef, module: LLVMModuleRef) -> IRBuilder {
+        IRBuilder { builder, module }
+    }
+
+    pub fn get_data_layout(&self) -> TargetData {
+        TargetData::new(unsafe { LLVMGetModuleDataLayout(self.module) })
     }
 
     pub fn get_builder(&self) -> LLVMBuilderRef {
@@ -184,18 +188,11 @@ impl IRBuilder {
                     let llvm_value = unsafe { LLVMBuildStore(self.builder, *rvalue, *ptr_value) };
                     Ok(Value::Instruction { llvm_value })
                 }
-                Value::Variable {
+                var @ Value::Variable {
                     llvm_value,
                     variable_type,
                 } => {
-                    let load = unsafe {
-                        LLVMBuildLoad2(
-                            self.builder,
-                            variable_type.get_type(),
-                            *llvm_value,
-                            NULL_STR,
-                        )
-                    };
+                    let load = self.create_aligned_load(var)?.get_raw_value()?;
 
                     let llvm_value = unsafe { LLVMBuildStore(self.builder, load, *ptr_value) };
                     Ok(Value::Instruction { llvm_value })
@@ -249,8 +246,15 @@ impl IRBuilder {
                 llvm_value: ptr_value,
                 variable_type,
             } => {
+                let align = self.get_data_layout().get_preferred_align(variable_type);
                 let value = unsafe {
-                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *ptr_value, NULL_STR)
+                    LLVMBuildAlignedLoad(
+                        self.builder,
+                        variable_type.get_type(),
+                        *ptr_value,
+                        align,
+                        NULL_STR,
+                    )
                 };
                 Ok(Value::Literal {
                     llvm_value: value,
@@ -269,18 +273,11 @@ impl IRBuilder {
 
     pub fn create_neg(&self, value: &Value) -> Result<Value, CodeGenError> {
         match value {
-            Value::Variable {
+            var @ Value::Variable {
                 llvm_value,
                 variable_type,
             } => {
-                let value = unsafe {
-                    LLVMBuildLoad2(
-                        self.builder,
-                        variable_type.get_type(),
-                        *llvm_value,
-                        NULL_STR,
-                    )
-                };
+                let value = self.create_aligned_load(var)?.get_raw_value()?;
                 let value = unsafe { LLVMBuildNeg(self.builder, value, NULL_STR) };
                 Ok(Value::Literal {
                     llvm_value: value,
@@ -293,6 +290,23 @@ impl IRBuilder {
         }
     }
 
+    pub fn create_aligned_load(&self, val: &Value) -> Result<Value, CodeGenError> {
+        let align = self.get_data_layout().get_preferred_align(val.get_type());
+        let value = unsafe {
+            LLVMBuildAlignedLoad(
+                self.builder,
+                val.get_type().get_type(),
+                val.get_raw_value()?,
+                align,
+                NULL_STR,
+            )
+        };
+        Ok(Value::Load {
+            llvm_value: value,
+            load_type: val.get_type().clone(),
+        })
+    }
+
     pub fn create_bin_op(
         &self,
         left: &Value,
@@ -301,7 +315,7 @@ impl IRBuilder {
     ) -> Result<Value, CodeGenError> {
         match (left, right) {
             (
-                Value::Variable {
+                var @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
                 },
@@ -309,9 +323,7 @@ impl IRBuilder {
                     llvm_value: rvalue, ..
                 },
             ) => {
-                let lvalue = unsafe {
-                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *lvalue, NULL_STR)
-                };
+                let lvalue = self.create_aligned_load(var)?.get_raw_value()?;
                 let llvm_value =
                     unsafe { LLVMBuildBinOp(self.builder, op, lvalue, *rvalue, NULL_STR) };
                 Ok(Value::Literal {
@@ -320,19 +332,17 @@ impl IRBuilder {
                 })
             }
             (
-                Value::Variable {
+                lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
                 },
-                Value::Variable {
+                rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
                 },
             ) => {
-                let lvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
-                let rvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+                let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
+                let rvalue = self.create_aligned_load(rvar)?.get_raw_value()?;
 
                 let llvm_value =
                     unsafe { LLVMBuildBinOp(self.builder, op, lvalue, rvalue, NULL_STR) };
@@ -372,7 +382,7 @@ impl IRBuilder {
                 })
             }
             (
-                Value::Variable {
+                var @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
                 },
@@ -380,9 +390,7 @@ impl IRBuilder {
                     llvm_value: rvalue, ..
                 },
             ) => {
-                let lvalue = unsafe {
-                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *lvalue, NULL_STR)
-                };
+                let lvalue = self.create_aligned_load(var)?.get_raw_value()?;
                 let llvm_value =
                     unsafe { LLVMBuildICmp(self.builder, op, lvalue, *rvalue, NULL_STR) };
                 Ok(Value::Literal {
@@ -391,19 +399,17 @@ impl IRBuilder {
                 })
             }
             (
-                Value::Variable {
+                lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
                 },
-                Value::Variable {
+                rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
                 },
             ) => {
-                let lvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
-                let rvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+                let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
+                let rvalue = self.create_aligned_load(rvar)?.get_raw_value()?;
 
                 let llvm_value =
                     unsafe { LLVMBuildICmp(self.builder, op, lvalue, rvalue, NULL_STR) };
@@ -427,7 +433,7 @@ impl IRBuilder {
     ) -> Result<Value, CodeGenError> {
         match (left, right) {
             (
-                Value::Variable {
+                lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
                 },
@@ -435,9 +441,7 @@ impl IRBuilder {
                     llvm_value: rvalue, ..
                 },
             ) => {
-                let lvalue = unsafe {
-                    LLVMBuildLoad2(self.builder, variable_type.get_type(), *lvalue, NULL_STR)
-                };
+                let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
                 let llvm_value =
                     unsafe { LLVMBuildFCmp(self.builder, op, lvalue, *rvalue, NULL_STR) };
                 Ok(Value::Literal {
@@ -446,19 +450,17 @@ impl IRBuilder {
                 })
             }
             (
-                Value::Variable {
+                lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
                 },
-                Value::Variable {
+                rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
                 },
             ) => {
-                let lvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, ltype.get_type(), *lvalue, NULL_STR) };
-                let rvalue =
-                    unsafe { LLVMBuildLoad2(self.builder, rtype.get_type(), *rvalue, NULL_STR) };
+                let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
+                let rvalue = self.create_aligned_load(rvar)?.get_raw_value()?;
 
                 let llvm_value =
                     unsafe { LLVMBuildFCmp(self.builder, op, lvalue, rvalue, NULL_STR) };
@@ -657,8 +659,10 @@ impl IRBuilder {
                     .collect();
                 let args = res?;
 
-                let fargs: Result<Vec<LLVMValueRef>, CodeGenError> =
-                    args.iter().map(|f| f.get_value(self.builder)).collect();
+                let fargs: Result<Vec<LLVMValueRef>, CodeGenError> = args
+                    .iter()
+                    .map(|f| f.get_value(self.builder, self.module))
+                    .collect();
                 let mut fargs = fargs?;
 
                 Ok(Value::Literal {
@@ -695,26 +699,36 @@ impl IRBuilder {
                     llvm_value: b_block,
                 },
             ) => {
-                if a.get_type() != b.get_type() {
-                    return Err(CodeGenError {
-                        message: "Incompatible types in branch return!".to_string(),
-                    });
-                }
+                let val = a.weak_cast(b.get_type(), self.builder);
+                let if_wval = match &val {
+                    Ok(v) => Some(v),
+                    Err(false) => Some(a),
+                    Err(true) => None,
+                };
+                let val = b.weak_cast(a.get_type(), self.builder);
+                let (a, b) = if if_wval.is_none() {
+                    let else_wval = match &val {
+                        Ok(v) => v,
+                        Err(false) => b,
+                        Err(true) => {
+                            return Err(CodeGenError {
+                                message: "Types do not match in if statement!".into(),
+                            });
+                        }
+                    };
+                    (a, else_wval)
+                } else {
+                    (if_wval.unwrap(), b)
+                };
+
                 let phi_node =
                     unsafe { LLVMBuildPhi(self.builder, a.get_type().get_type(), NULL_STR) };
 
                 let a_node = match &a {
-                    Value::Variable {
+                    var @ Value::Variable {
                         llvm_value,
                         variable_type,
-                    } => unsafe {
-                        LLVMBuildLoad2(
-                            self.builder,
-                            variable_type.get_type(),
-                            *llvm_value,
-                            NULL_STR,
-                        )
-                    },
+                    } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
                     Value::Instruction { llvm_value } => *llvm_value,
                     Value::Load { llvm_value, .. } => *llvm_value,
@@ -726,17 +740,10 @@ impl IRBuilder {
                 };
 
                 let b_node = match &b {
-                    Value::Variable {
+                    var @ Value::Variable {
                         llvm_value,
                         variable_type,
-                    } => unsafe {
-                        LLVMBuildLoad2(
-                            self.builder,
-                            variable_type.get_type(),
-                            *llvm_value,
-                            NULL_STR,
-                        )
-                    },
+                    } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
                     Value::Instruction { llvm_value } => *llvm_value,
                     Value::Load { llvm_value, .. } => *llvm_value,
@@ -762,6 +769,50 @@ impl IRBuilder {
                 })
             }
         }
+    }
+
+    pub fn create_select(
+        &self,
+        cond: &Value,
+        if_val: &Value,
+        else_val: &Value,
+    ) -> Result<Value, CodeGenError> {
+        let val = if_val.weak_cast(else_val.get_type(), self.builder);
+        let if_wval = match &val {
+            Ok(v) => Some(v),
+            Err(false) => Some(if_val),
+            Err(true) => None,
+        };
+        let val = else_val.weak_cast(if_val.get_type(), self.builder);
+        let (if_val, else_val) = if if_wval.is_none() {
+            let else_wval = match &val {
+                Ok(v) => v,
+                Err(false) => else_val,
+                Err(true) => {
+                    return Err(CodeGenError {
+                        message: "Types do not match in if statement!".into(),
+                    });
+                }
+            };
+            (if_val, else_wval)
+        } else {
+            (if_wval.unwrap(), else_val)
+        };
+
+        if if_val.get_type() != else_val.get_type() {}
+        let llvm_value = unsafe {
+            LLVMBuildSelect(
+                self.builder,
+                cond.get_value(self.builder, self.module)?,
+                if_val.get_value(self.builder, self.module)?,
+                else_val.get_value(self.builder, self.module)?,
+                NULL_STR,
+            )
+        };
+        Ok(Value::Literal {
+            llvm_value,
+            literal_type: if_val.get_type().clone(),
+        })
     }
 
     pub fn append_block(&self, func: &Value) -> Result<Value, CodeGenError> {
@@ -815,18 +866,11 @@ impl IRBuilder {
             Value::Literal { llvm_value, .. } => Ok(Value::Instruction {
                 llvm_value: unsafe { LLVMBuildRet(self.builder, *llvm_value) },
             }),
-            Value::Variable {
+            var @ Value::Variable {
                 llvm_value,
                 variable_type,
             } => {
-                let ld = unsafe {
-                    LLVMBuildLoad2(
-                        self.builder,
-                        variable_type.get_type(),
-                        *llvm_value,
-                        NULL_STR,
-                    )
-                };
+                let ld = self.create_aligned_load(var)?.get_raw_value()?;
                 let ret = unsafe { LLVMBuildRet(self.builder, ld) };
                 Ok(Value::Instruction { llvm_value: ret })
             }
@@ -983,5 +1027,14 @@ impl IRBuilder {
             }
         }
         Ok(())
+    }
+
+    pub fn is_constant(&self, val: &Value) -> Result<bool, CodeGenError> {
+        let value = val.get_raw_value()?;
+        Ok(if (unsafe { LLVMIsConstant(value) }) == 0 {
+            false
+        } else {
+            true
+        })
     }
 }

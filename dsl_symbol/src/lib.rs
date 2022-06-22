@@ -6,13 +6,13 @@ use dsl_util::{CreateParent, Grouper, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
-        LLVMBuildBitCast, LLVMBuildIntCast2, LLVMBuildLoad2, LLVMConstArray, LLVMGetAlignment,
-        LLVMGetArrayLength, LLVMGetIntTypeWidth, LLVMGetTypeKind, LLVMInt8Type, LLVMPointerType,
-        LLVMVoidType,
+        LLVMBuildBitCast, LLVMBuildIntCast2, LLVMBuildLoad2, LLVMBuildSExt, LLVMBuildZExt,
+        LLVMConstArray, LLVMGetAlignment, LLVMGetArrayLength, LLVMGetIntTypeWidth, LLVMGetTypeKind,
+        LLVMInt8Type, LLVMPointerType, LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
-    target::LLVMElementAtOffset,
-    LLVMGetTypeSize, LLVMGetValueAt,
+    target::{LLVMElementAtOffset, LLVMGetModuleDataLayout, LLVMPreferredAlignmentOfType},
+    LLVMBuildAlignedLoad, LLVMGetTypeSize, LLVMGetValueAt,
 };
 
 #[derive(Debug, Clone)]
@@ -102,10 +102,13 @@ impl Value {
         }
     }
 
-    pub fn get_value(&self, builder: LLVMBuilderRef) -> Result<LLVMValueRef, CodeGenError> {
+    pub fn get_value(
+        &self,
+        builder: LLVMBuilderRef,
+        module: LLVMModuleRef,
+    ) -> Result<LLVMValueRef, CodeGenError> {
         match self {
             Value::Empty
-            | Value::Instruction { .. }
             | Value::Block { .. }
             | Value::FunctionTemplate { .. }
             | Value::TemplateFields { .. } => Err(CodeGenError {
@@ -117,22 +120,25 @@ impl Value {
                 llvm_value,
                 variable_type,
             } => unsafe {
-                Ok(LLVMBuildLoad2(
+                let mods = LLVMGetModuleDataLayout(module);
+                let align = LLVMPreferredAlignmentOfType(mods, variable_type.get_type());
+                Ok(LLVMBuildAlignedLoad(
                     builder,
                     variable_type.get_type(),
                     *llvm_value,
+                    align,
                     NULL_STR,
                 ))
             },
             Value::Literal { llvm_value, .. } => Ok(*llvm_value),
             Value::Load { llvm_value, .. } => Ok(*llvm_value),
+            Value::Instruction { llvm_value, .. } => Ok(*llvm_value),
         }
     }
 
     pub fn get_raw_value(&self) -> Result<LLVMValueRef, CodeGenError> {
         match self {
             Value::Empty
-            | Value::Instruction { .. }
             | Value::Block { .. }
             | Value::FunctionTemplate { .. }
             | Value::TemplateFields { .. } => Err(CodeGenError {
@@ -143,6 +149,8 @@ impl Value {
             Value::Variable { llvm_value, .. } => Ok(*llvm_value),
             Value::Literal { llvm_value, .. } => Ok(*llvm_value),
             Value::Load { llvm_value, .. } => Ok(*llvm_value),
+
+            Value::Instruction { llvm_value, .. } => Ok(*llvm_value),
         }
     }
 
@@ -226,12 +234,13 @@ impl Value {
                     llvm_value,
                     literal_type:
                         Type::Integer {
-                            llvm_type: ltype, ..
+                            llvm_type: ltype,
+                            signed: lsigned,
                         },
                 },
                 Type::Integer {
                     llvm_type: rtype,
-                    signed,
+                    signed: rsigned,
                 },
             ) => {
                 if *ltype != *rtype {
@@ -241,9 +250,23 @@ impl Value {
                                 builder,
                                 *llvm_value,
                                 *rtype,
-                                if *signed { 1 } else { 0 },
+                                if *rsigned { 1 } else { 0 },
                                 NULL_STR,
                             )
+                        },
+                        literal_type: to_type.clone(),
+                    });
+                } else if *lsigned && !rsigned {
+                    return Ok(Value::Literal {
+                        llvm_value: unsafe {
+                            LLVMBuildZExt(builder, *llvm_value, *rtype, NULL_STR)
+                        },
+                        literal_type: to_type.clone(),
+                    });
+                } else if !lsigned && *rsigned {
+                    return Ok(Value::Literal {
+                        llvm_value: unsafe {
+                            LLVMBuildSExt(builder, *llvm_value, *rtype, NULL_STR)
                         },
                         literal_type: to_type.clone(),
                     });

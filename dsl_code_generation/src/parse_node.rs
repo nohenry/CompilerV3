@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::ffi::CStr;
 
 use dsl_errors::{check, CodeGenError};
 use linked_hash_map::LinkedHashMap;
-use llvm_sys::core::{LLVMGetAllocatedType, LLVMGetParam, LLVMPrintTypeToString, LLVMTypeOf};
-use llvm_sys::LLVMSetAllocatedType;
+use llvm_sys::core::{LLVMGetParam};
 
 use dsl_lexer::ast::{
     FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TemplateDecleration,
@@ -458,7 +456,7 @@ impl Module {
                                             if let Ok(p) = self
                                                 .current_function
                                                 .borrow()
-                                                .get_value(self.builder.get_builder())
+                                                .get_value(self.builder.get_builder(), self.module)
                                             {
                                                 LLVMGetParam(p, i.try_into().unwrap())
                                             } else {
