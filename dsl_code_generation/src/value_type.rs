@@ -19,6 +19,12 @@ impl Module {
             Type::Int(s, _) => unsafe {
                 dsl_symbol::Type::Integer {
                     llvm_type: LLVMIntType(*s as _),
+                    signed: true,
+                }
+            },
+            Type::Uint(s, _) => unsafe {
+                dsl_symbol::Type::Integer {
+                    llvm_type: LLVMIntType(*s as _),
                     signed: false,
                 }
             },

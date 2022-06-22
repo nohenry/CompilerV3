@@ -47,7 +47,7 @@ impl Module {
             .borrow_mut()
             .add_child(name, SymbolValue::Module);
 
-        Module {
+        let p = Module {
             ast,
             module,
             current_block: Rc::new(RefCell::new(Value::Empty)),
@@ -58,7 +58,26 @@ impl Module {
             symbol_root: refr,
             current_symbol: Rc::new(RefCell::new(vec![name.clone()])),
             code_gen_pass: Rc::new(RefCell::new(CodeGenPass::Symbols)),
-        }
+        };
+        p.add_symbol(
+            &"print".to_string(),
+            SymbolValue::Funtion(
+                p.builder
+                    .add_function(
+                        p.builder.get_fn(
+                            p.builder.get_unit(),
+                            &vec![(
+                                "str".to_string(),
+                                p.builder.get_ptr(&p.builder.get_uint_8()),
+                            )],
+                        ),
+                        "printf".to_string(),
+                        module,
+                    )
+                    .unwrap(),
+            ),
+        );
+        p
     }
 
     pub fn get_module(&self) -> LLVMModuleRef {
@@ -67,7 +86,8 @@ impl Module {
 
     pub fn gen(&self) {
         self.gen_parse_node(&self.ast);
-        self.code_gen_pass.replace(CodeGenPass::SymbolsSpecialization);
+        self.code_gen_pass
+            .replace(CodeGenPass::SymbolsSpecialization);
         self.gen_parse_node(&self.ast);
         self.code_gen_pass.replace(CodeGenPass::Values);
         self.gen_parse_node(&self.ast);

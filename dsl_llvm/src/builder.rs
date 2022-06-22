@@ -17,7 +17,7 @@ use llvm_sys::{
         LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetAlignment, LLVMGetGlobalContext,
         LLVMInt1Type, LLVMInt64Type, LLVMInt8Type, LLVMPointerType, LLVMPositionBuilder,
         LLVMPositionBuilderAtEnd, LLVMPrintTypeToString, LLVMStructCreateNamed, LLVMStructSetBody,
-        LLVMTypeOf,
+        LLVMTypeOf, LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
     LLVMIntPredicate, LLVMOpcode, LLVMRealPredicate, LLVMSetAllocatedType,
@@ -72,9 +72,15 @@ impl IRBuilder {
         }
     }
 
+    pub fn get_bool(&self) -> Type {
+        Type::Boolean {
+            llvm_type: unsafe { LLVMInt1Type() },
+        }
+    }
+
     pub fn get_unit(&self) -> Type {
         Type::Unit {
-            llvm_type: unsafe { LLVMInt1Type() },
+            llvm_type: unsafe { LLVMVoidType() },
         }
     }
 

@@ -11,7 +11,7 @@ use std::{
     rc::Rc,
 };
 
-use dsl_symbol::Symbol;
+use dsl_symbol::{Symbol, SymbolValue};
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
     core::{LLVMModuleCreateWithName, LLVMPrintModuleToFile},
@@ -155,11 +155,12 @@ fn main() {
 
     let symbols = Rc::new(RefCell::new(symbols));
 
+
     unsafe {
         let module = LLVMModuleCreateWithName(name.as_ptr());
         let name = name.into_string().unwrap();
 
-        let mut module =
+        let module =
             dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
 
         module.gen();
@@ -173,6 +174,12 @@ fn main() {
             target_machine,
             Path::new(filename.to_str().unwrap()),
             EmitType::IR,
+        );
+        emit(
+            module.get_module(),
+            target_machine,
+            Path::new(filename.to_str().unwrap()),
+            EmitType::Object,
         );
     }
 }

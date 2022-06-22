@@ -6,11 +6,13 @@ use dsl_util::{CreateParent, Grouper, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
-        LLVMBuildIntCast2, LLVMBuildLoad2, LLVMGetAlignment, LLVMGetIntTypeWidth, LLVMGetTypeKind,
-        LLVMPointerType, LLVMVoidType,
+        LLVMBuildBitCast, LLVMBuildIntCast2, LLVMBuildLoad2, LLVMConstArray, LLVMGetAlignment,
+        LLVMGetArrayLength, LLVMGetIntTypeWidth, LLVMGetTypeKind, LLVMInt8Type, LLVMPointerType,
+        LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
-    LLVMGetTypeSize,
+    target::LLVMElementAtOffset,
+    LLVMGetTypeSize, LLVMGetValueAt,
 };
 
 #[derive(Debug, Clone)]
@@ -162,6 +164,64 @@ impl Value {
         }
         match (self, to_type) {
             (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type:
+                        Type::Array {
+                            base_type: lbtype, ..
+                        },
+                }
+                | Value::Literal {
+                    llvm_value: lvalue,
+                    literal_type:
+                        Type::Array {
+                            base_type: lbtype, ..
+                        },
+                },
+                Type::Reference {
+                    llvm_type: rtype,
+                    base_type: rbtype,
+                },
+            ) => {
+                if lbtype != rbtype {
+                    return Err(true);
+                }
+                let val = unsafe { LLVMBuildBitCast(builder, *lvalue, *rtype, NULL_STR) };
+
+                return Ok(Value::Literal {
+                    llvm_value: val,
+                    literal_type: to_type.clone(),
+                });
+            }
+            (
+                Value::Variable {
+                    llvm_value: lvalue,
+                    variable_type: Type::String { .. },
+                }
+                | Value::Literal {
+                    llvm_value: lvalue,
+                    literal_type: Type::String { .. },
+                },
+                Type::Reference {
+                    llvm_type: rtype,
+                    base_type: rbtype,
+                },
+            ) => {
+                if (Type::Integer {
+                    llvm_type: unsafe { LLVMInt8Type() },
+                    signed: false,
+                }) != **rbtype
+                {
+                    return Err(true);
+                }
+                let val = unsafe { LLVMBuildBitCast(builder, *lvalue, *rtype, NULL_STR) };
+
+                return Ok(Value::Literal {
+                    llvm_value: val,
+                    literal_type: to_type.clone(),
+                });
+            }
+            (
                 Value::Literal {
                     llvm_value,
                     literal_type:
@@ -188,6 +248,58 @@ impl Value {
                         literal_type: to_type.clone(),
                     });
                 }
+            }
+            (
+                Value::Literal {
+                    llvm_value,
+                    literal_type:
+                        Type::Array {
+                            base_type: lbtype,
+                            llvm_type: ltype,
+                        },
+                },
+                Type::Array {
+                    base_type: rbtype,
+                    llvm_type: rtype,
+                },
+            ) => {
+                let llen = unsafe { LLVMGetArrayLength(*ltype) };
+                let rlen = unsafe { LLVMGetArrayLength(*rtype) };
+                if llen != rlen {
+                    return Err(true);
+                }
+
+                let res: Result<Vec<Value>, bool> = (0..llen)
+                    .into_iter()
+                    .map(|i| {
+                        let value = unsafe { LLVMGetValueAt(*llvm_value, i) };
+
+                        Value::Literal {
+                            llvm_value: value,
+                            literal_type: *lbtype.clone(),
+                        }
+                        .weak_cast(&rbtype, builder)
+                    })
+                    .collect();
+                let res = res?;
+
+                let r: Result<Vec<LLVMValueRef>, CodeGenError> =
+                    res.iter().map(|f| f.get_raw_value()).collect();
+                let mut r = match r {
+                    Ok(r) => r,
+                    Err(_) => return Err(true),
+                };
+
+                let llvm_value =
+                    unsafe { LLVMConstArray(*rtype, r.as_mut_ptr(), r.len().try_into().unwrap()) };
+
+                return Ok(Value::Literal {
+                    llvm_value,
+                    literal_type: to_type.clone(),
+                });
+                // let
+
+                // LLVMElement(*llvm_value, StructTy, Offset)
             }
             _ => (),
         }

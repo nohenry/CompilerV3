@@ -1251,7 +1251,7 @@ fn parse_type(tokens: &mut Cursor<&Token>) -> Result<Type, ParseError> {
                     let size = if let Some(Token {
                         token_type: TokenKind::Colon,
                         ..
-                    }) = tokens.peek_next()
+                    }) = tokens.current()
                     {
                         let tok = tokens.current().unwrap();
                         tokens.move_next();

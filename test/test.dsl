@@ -4,5 +4,5 @@ template Data {
 }
 
 main(d: int32) => {
-    let a = [5, 6, 7]
+    print("Hello World!")
 }

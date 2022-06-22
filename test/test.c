@@ -4,8 +4,10 @@ struct Data {
     int y;
 };
 
+char t[] = "fslkdjflkj";
+
 int main(int argc)
 {
-    int ggdf[] = {argc, 6, 7, 8};
+    printf("Hello");
     // struct Data data = {.x = argc, .y = 7};
 }

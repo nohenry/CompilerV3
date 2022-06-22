@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
+use dsl_util::NULL_STR;
 use llvm_sys::{core::{
     LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMConstString, 
-    LLVMFloatType, LLVMInt1Type, LLVMInt32Type,
-}};
+    LLVMFloatType, LLVMInt1Type, LLVMInt32Type, LLVMInt8Type, LLVMBuildGlobalString,
+}, LLVMCreateStringLiteral};
 
 use dsl_lexer::ast::{ArrayInitializer, Literal, TemplateInitializer};
 
@@ -83,11 +84,11 @@ impl Module {
             }
             Literal::String(s, _) => Value::Literal {
                 llvm_value: unsafe {
-                    LLVMConstString(s.as_ptr() as *const _, s.len().try_into().unwrap(), 0)
+                    LLVMCreateStringLiteral(self.builder.get_builder(), s.as_ptr() as *const _, s.len().try_into().unwrap(), NULL_STR)
                 },
                 literal_type: Type::String {
                     llvm_type: unsafe {
-                        LLVMArrayType(LLVMInt1Type(), s.len().try_into().unwrap())
+                        LLVMArrayType(LLVMInt8Type(), (s.len() + 1).try_into().unwrap())
                     },
                     length: s.len(),
                 },

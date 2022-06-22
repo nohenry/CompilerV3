@@ -89,33 +89,13 @@ impl Module {
                     _ => return Value::Empty,
                 }
                 let place_var = if let Some((init, ..)) = possible_initializer {
-                    // let alloc_block = check!(
-                    //     self,
-                    //     self.builder.append_block(&self.current_function.borrow()),
-                    //     Value
-                    // );
-                    // let expr = check!(
-                    //     self,
-                    //     self.builder.append_block(&self.current_function.borrow()),
-                    //     Value
-                    // );
                     let mut alloc = check!(
                         self,
-                        self.builder.create_alloc(&self.builder.get_unit()),
+                        self.builder.create_alloc(&self.builder.get_bool()),
                         Value
                     );
 
-                    // let end = check!(self, self.builder.create_block(), Value);
-
-                    // check!(self, self.builder.create_branch(&alloc_block), Value);
-
-                    // self.builder.set_position_end(&alloc_block);
-
-                    // self.builder.set_position_end(&alloc_block);
-                    // self.current_block.replace(alloc_block);
                     let value = check!(self.gen_expression(init.as_ref()));
-
-                    // check!(self, self.builder.create_branch(&end), Value);
 
                     if let Some(ty) = variable_type {
                         let ty = self.gen_type(ty.as_ref());
@@ -135,14 +115,29 @@ impl Module {
 
                         check!(
                             self,
+                            self.builder.set_allocated_type(
+                                &mut alloc,
+                                self.module,
+                                &val,
+                                val.get_type()
+                            ),
+                            Value
+                        );
+
+                        check!(
+                            self,
                             self.builder.create_store(&alloc, &&val, self.module),
                             Value
                         );
                     } else {
                         check!(
                             self,
-                            self.builder
-                                .set_allocated_type(&mut alloc, self.module, &value, value.get_type()),
+                            self.builder.set_allocated_type(
+                                &mut alloc,
+                                self.module,
+                                &value,
+                                value.get_type()
+                            ),
                             Value
                         );
 
