@@ -703,7 +703,7 @@ pub enum SymbolValue {
 pub struct Symbol {
     pub name: String,
     pub value: SymbolValue,
-    pub children: HashMap<String, Symbol>,
+    pub children: LinkedHashMap<String, Symbol>,
 }
 
 impl Symbol {
@@ -711,7 +711,7 @@ impl Symbol {
         Symbol {
             name: String::from("root"),
             value: SymbolValue::Empty,
-            children: HashMap::new(),
+            children: LinkedHashMap::new(),
         }
     }
 
@@ -719,7 +719,7 @@ impl Symbol {
         Symbol {
             name,
             value,
-            children: HashMap::new(),
+            children: LinkedHashMap::new(),
         }
     }
 

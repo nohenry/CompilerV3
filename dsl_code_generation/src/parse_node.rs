@@ -5,8 +5,8 @@ use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::LLVMGetParam;
 
 use dsl_lexer::ast::{
-    FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TemplateDecleration,
-    TypeSymbol, VariableDecleration,
+    ActionDecleration, FunctionDecleration, FunctionSignature, GenericParameters, ParseNode,
+    TemplateDecleration, TypeSymbol, VariableDecleration,
 };
 use dsl_lexer::TokenKind;
 use dsl_util::cast;
@@ -32,10 +32,13 @@ impl Module {
 
                 match &*self.code_gen_pass.borrow() {
                     CodeGenPass::Symbols => {
+                        let mng = self.get_mangled_name(name);
+                        let mut pth = self.current_symbol.borrow().clone();
+                        pth.push(name.clone());
                         let template = check!(
                             self,
                             self.builder
-                                .create_struct_named(&self.current_symbol.borrow(), name),
+                                .create_struct_named(&pth, &mng),
                             Value
                         );
                         self.add_and_set_symbol(&name, SymbolValue::Template(template));
@@ -69,7 +72,7 @@ impl Module {
                                         Symbol {
                                             name: name.clone(),
                                             value: SymbolValue::Field(ty.clone()),
-                                            children: HashMap::new(),
+                                            children: LinkedHashMap::new(),
                                         },
                                     );
                                 }
@@ -80,6 +83,30 @@ impl Module {
                     }
                     _ => (),
                 }
+            }
+            ParseNode::ActionDecleration(ActionDecleration {
+                template_type,
+                body,
+                ..
+            }) => {
+                let Type::Template {path, ..} = self.gen_type(template_type) else {
+                    // TODO: errors
+                    return Value::Empty;
+                };
+                // let mut root_sym = self.symbol_root.borrow();
+                // let Some(sym) = self.get_symbol(&mut root_sym, &path) else {
+                //     // TODO: errors
+                //     return Value::Empty;
+                // };
+
+                println!("{:?}", path);
+                let old_current_sym = self.current_symbol.take();
+
+                self.current_symbol.replace(path);
+
+                self.gen_parse_node(body);
+
+                self.current_symbol.replace(old_current_sym);
             }
             ParseNode::VariableDecleration(VariableDecleration {
                 identifier,
@@ -390,8 +417,11 @@ impl Module {
 
                         let function = check!(
                             self,
-                            self.builder
-                                .add_function(function_type, name.to_string(), self.module),
+                            self.builder.add_function(
+                                function_type,
+                                self.get_mangled_name(name),
+                                self.module
+                            ),
                             Value
                         );
 

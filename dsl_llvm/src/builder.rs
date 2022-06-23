@@ -908,12 +908,11 @@ impl IRBuilder {
         let name = CString::new(name.as_str()).unwrap();
         let value = unsafe { LLVMStructCreateNamed(LLVMGetGlobalContext(), name.as_ptr()) };
 
-        let mut path = Vec::from(path);
-        path.push(name.into_string().unwrap());
+        // path.push(name.into_string().unwrap());
         Ok(Type::Template {
             llvm_type: value,
             fields: LinkedHashMap::new(),
-            path 
+            path: Vec::from(path)
         })
     }
 

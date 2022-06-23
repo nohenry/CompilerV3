@@ -182,15 +182,19 @@ impl Module {
                                                 let mut sym = sym;
                                                 let mut fields = fields;
                                                 for m in citer {
-                                                    let pos = fields.keys().position(|f| f == m);
-                                                    if let (Some(child), Some(pos)) =
-                                                        (sym.children.get(m), pos)
-                                                    {
+                                                    if let Some(child) = sym.children.get(m) {
                                                         match &child.value {
                                                             SymbolValue::Field(ty) => {
+                                                                let pos = fields
+                                                                    .keys()
+                                                                    .position(|f| f == m);
+                                                                let Some(pos) = pos else {
+                                                                    // TODO: errors
+                                                                    return Value::Empty;
+                                                                };
                                                                 match ty {
                                                                     Type::Template {
-                                                                        path, 
+                                                                        path,
                                                                         fields: tf,
                                                                         ..
                                                                     } => {
@@ -211,6 +215,10 @@ impl Module {
                                                                     ),
                                                                     Value
                                                                 )
+                                                            }
+                                                            SymbolValue::Funtion(func @ Value::Function {..}) => {
+                                                                // sym = func;
+                                                                return func.clone();
                                                             }
                                                             _ => (),
                                                         }

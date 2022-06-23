@@ -156,9 +156,10 @@ fn main() {
     let symbols = Rc::new(RefCell::new(symbols));
 
 
+    let module_name = path.file_stem().unwrap().to_str().unwrap();
     unsafe {
-        let module = LLVMModuleCreateWithName(name.as_ptr());
-        let name = name.into_string().unwrap();
+        let module = LLVMModuleCreateWithName(module_name.as_ptr() as *const i8);
+        let name = module_name.to_string();
 
         let module =
             dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());

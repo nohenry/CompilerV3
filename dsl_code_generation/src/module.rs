@@ -233,6 +233,11 @@ impl Module {
         None
     }
 
+    pub fn get_mangled_name(&self, name: &String) -> String {
+        let mng = self.current_symbol.borrow().join("-");
+        format!("{}-{}", mng, name)
+    }
+
     pub fn add_error(&self, message: String) {
         self.errors.borrow_mut().push(CodeGenError { message });
     }
