@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use dsl_errors::{check, CodeGenError};
 use linked_hash_map::LinkedHashMap;
-use llvm_sys::core::{LLVMGetParam};
+use llvm_sys::core::LLVMGetParam;
 
 use dsl_lexer::ast::{
     FunctionDecleration, FunctionSignature, GenericParameters, ParseNode, TemplateDecleration,
@@ -32,12 +32,22 @@ impl Module {
 
                 match &*self.code_gen_pass.borrow() {
                     CodeGenPass::Symbols => {
-                        let template = check!(self, self.builder.create_struct_named(name), Value);
+                        let template = check!(
+                            self,
+                            self.builder
+                                .create_struct_named(&self.current_symbol.borrow(), name),
+                            Value
+                        );
                         self.add_and_set_symbol(&name, SymbolValue::Template(template));
 
                         self.pop_symbol();
                     }
                     CodeGenPass::Values => {
+                        let types: Vec<_> = fields
+                            .iter()
+                            .map(|f| self.gen_type(&f.symbol_type))
+                            .collect();
+
                         let mut root_sym = self.symbol_root.borrow_mut();
                         let current =
                             self.get_symbol_mut(&mut root_sym, &self.current_symbol.borrow());
@@ -49,11 +59,6 @@ impl Module {
                             }) = children.get_mut(name)
                             {
                                 let mut vars = LinkedHashMap::new();
-
-                                let types: Vec<_> = fields
-                                    .iter()
-                                    .map(|f| self.gen_type(&f.symbol_type))
-                                    .collect();
 
                                 for (f, ty) in fields.iter().zip(types.iter()) {
                                     let name = cast!(&f.symbol.token_type, TokenKind::Ident);

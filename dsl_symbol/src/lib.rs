@@ -417,6 +417,7 @@ pub enum Type {
     Template {
         llvm_type: LLVMTypeRef,
         fields: LinkedHashMap<String, Type>,
+        path: Vec<String>,
     },
 }
 
@@ -449,6 +450,21 @@ impl Type {
             llvm_type: unsafe { LLVMVoidType() },
         }
     }
+
+    pub fn resolve_properties<'a>(&'a self) -> Option<&'a LinkedHashMap<String, Type>> {
+        match self {
+            Type::Template { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
+    pub fn resolve_path<'a>(&'a self) -> Option<&'a Vec<String>> {
+        match self {
+            Type::Template { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
 }
 
 impl Display for Type {

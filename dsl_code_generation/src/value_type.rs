@@ -117,6 +117,7 @@ impl Module {
                             let syysdf = al_sym;
                             match &syysdf.value {
                                 SymbolValue::Generic(ty, bounds) => return ty.clone(),
+                                SymbolValue::Template(ty) => return ty.clone(),
                                 _ => {
                                     self.add_error(format!("Unsupported type {:?}", c));
                                     return dsl_symbol::Type::Empty;

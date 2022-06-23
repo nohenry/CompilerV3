@@ -216,7 +216,7 @@ impl IRBuilder {
 
                             let ptr = self.create_struct_gep(
                                 ptr,
-                                variable_type.clone(),
+                                field.1.get_type().clone(),
                                 pos.try_into().unwrap(),
                             )?;
 
@@ -904,13 +904,16 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_struct_named(&self, name: &String) -> Result<Type, CodeGenError> {
+    pub fn create_struct_named(&self, path: &[String], name: &String) -> Result<Type, CodeGenError> {
         let name = CString::new(name.as_str()).unwrap();
         let value = unsafe { LLVMStructCreateNamed(LLVMGetGlobalContext(), name.as_ptr()) };
 
+        let mut path = Vec::from(path);
+        path.push(name.into_string().unwrap());
         Ok(Type::Template {
             llvm_type: value,
             fields: LinkedHashMap::new(),
+            path 
         })
     }
 
@@ -921,6 +924,7 @@ impl IRBuilder {
             Type::Template {
                 llvm_type,
                 fields: flds,
+                ..
             } => unsafe {
                 LLVMStructSetBody(
                     *llvm_type,
@@ -937,6 +941,7 @@ impl IRBuilder {
 
     pub fn create_struct(
         &self,
+        path: &[String],
         name: &String,
         fields: LinkedHashMap<String, Type>,
     ) -> Result<Type, CodeGenError> {
@@ -959,6 +964,7 @@ impl IRBuilder {
         Ok(Type::Template {
             llvm_type: value,
             fields,
+            path: Vec::from(path)
         })
     }
 
@@ -1015,7 +1021,7 @@ impl IRBuilder {
                 variable_type,
             } => {
                 unsafe {
-                    LLVMSetAllocatedType(*llvm_value, module, src.get_raw_value()?, ty.get_type());
+                    LLVMSetAllocatedType(*llvm_value, module, ty.get_type());
                 }
                 *variable_type = ty.clone();
             }

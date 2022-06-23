@@ -19,17 +19,19 @@ use dsl_symbol::{Symbol, SymbolValue, Type, Value};
 impl Module {
     pub(super) fn gen_expression(&self, expression: &Expression) -> Value {
         match expression {
-            Expression::BinaryExpression(BinaryExpression {
-                left,
-                operator,
-                right,
-                ..
-            }) => {
+            Expression::BinaryExpression(
+                bin @ BinaryExpression {
+                    left: oleft,
+                    operator,
+                    right: oright,
+                    ..
+                },
+            ) => {
                 use dsl_lexer::OperatorKind::*;
                 let func = match operator {
                     Assignment => {
-                        let left = self.gen_expression(left);
-                        let right = self.gen_expression(right);
+                        let left = self.gen_expression(oleft);
+                        let right = self.gen_expression(oright);
 
                         check!(
                             self,
@@ -63,8 +65,168 @@ impl Module {
                             BitLeftEqual => LLVMOpcode::LLVMShl,
                             BitRightEqual => LLVMOpcode::LLVMAShr,
                             _ => {
-                                let left = self.gen_expression(left);
-                                let right = self.gen_expression(right);
+                                match c {
+                                    // Handle membor access
+                                    OperatorKind::Dot => {
+                                        let mut root_ch = self.symbol_root.borrow();
+                                        let current = self.get_symbol(
+                                            &mut root_ch,
+                                            &self.current_symbol.borrow(),
+                                        );
+
+                                        // let mut current = self.current_symbol
+                                        fn trav<'a>(arr: &mut Vec<String>, b: &BinaryExpression) {
+                                            match (&*b.left, &*b.right, &b.operator) {
+                                                (
+                                                    Expression::Identifier(l),
+                                                    Expression::Identifier(r),
+                                                    OperatorKind::Dot,
+                                                ) => {
+                                                    // let sym = module.find_up_chain(
+                                                    //     root,
+                                                    //     &module.current_symbol.borrow(),
+                                                    //     l.as_string(),
+                                                    // );
+                                                    // if let Some(sym) = sym {
+                                                    //     {
+                                                    //         (F)(sym, &Type::Empty, data);
+                                                    //     }
+                                                    //     match &sym.value {
+                                                    //         SymbolValue::Template(
+                                                    //             Type::Template { fields, .. },
+                                                    //         ) => {}
+                                                    //         SymbolValue::Variable(
+                                                    //             Value::Variable {
+                                                    //                 variable_type,
+                                                    //                 ..
+                                                    //             },
+                                                    //         ) => {
+                                                    //             if let Some(fields) =
+                                                    //                 variable_type.resolve_path()
+                                                    //             {
+                                                    //                 println!("{:?}", fields);
+                                                    //                 if let Some(Symbol {
+                                                    //                     children,
+                                                    //                     ..
+                                                    //                 }) = module
+                                                    //                     .get_symbol(root, &fields)
+                                                    //                 {
+                                                    //                     if let Some(c) = children
+                                                    //                         .get(r.as_string())
+                                                    //                     {
+                                                    //                         *next = c;
+                                                    //                         (F)(
+                                                    //                             c,
+                                                    //                             variable_type,
+                                                    //                             data,
+                                                    //                         );
+                                                    //                     }
+                                                    //                 }
+                                                    //             }
+                                                    //         }
+                                                    //         _ => (),
+                                                    //     }
+                                                    // }
+                                                    arr.push(l.as_string().clone());
+                                                    arr.push(r.as_string().clone());
+                                                }
+                                                (
+                                                    Expression::BinaryExpression(l),
+                                                    Expression::Identifier(r),
+                                                    OperatorKind::Dot,
+                                                ) => {
+                                                    trav(arr, l);
+                                                    arr.push(r.as_string().clone());
+                                                }
+                                                _ => (),
+                                            }
+                                        }
+
+                                        let mut chain = Vec::new();
+                                        if let Some(current) = current {
+                                            trav(&mut chain, bin);
+                                        }
+                                        println!("{:?}", chain);
+
+                                        let mut citer = chain.iter();
+
+                                        let first = citer.next();
+                                        let Some(first) = first else {
+                                            return Value::Empty;
+                                        };
+
+                                        let root_sym = self.symbol_root.borrow();
+
+                                        let Some(sym) = self.find_up_chain(
+                                            &root_sym,
+                                            &self.current_symbol.borrow(),
+                                            first,
+                                        ) else {
+                                            return Value::Empty
+                                        };
+
+                                        println!("{:?}", sym);
+
+                                        match &sym.value {
+                                            SymbolValue::Variable(
+                                                var @ Value::Variable {
+                                                    variable_type:
+                                                        ty @ Type::Template { path, fields, .. },
+                                                    ..
+                                                },
+                                            ) => {
+                                                let Some(sym) = self.get_symbol(&root_sym, path) else {
+                                                    return Value::Empty
+                                                };
+                                                let mut var = var.clone();
+                                                let mut sym = sym;
+                                                let mut fields = fields;
+                                                for m in citer {
+                                                    let pos = fields.keys().position(|f| f == m);
+                                                    if let (Some(child), Some(pos)) =
+                                                        (sym.children.get(m), pos)
+                                                    {
+                                                        match &child.value {
+                                                            SymbolValue::Field(ty) => {
+                                                                match ty {
+                                                                    Type::Template {
+                                                                        path, 
+                                                                        fields: tf,
+                                                                        ..
+                                                                    } => {
+                                                                        let Some(c) = self.get_symbol(&root_sym, path) else {
+                                                                            return Value::Empty
+                                                                        };
+                                                                        sym = c;
+                                                                        fields = tf;
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                                var = check!(
+                                                                    self,
+                                                                    self.builder.create_struct_gep(
+                                                                        &var,
+                                                                        ty.clone(),
+                                                                        pos.try_into().unwrap(),
+                                                                    ),
+                                                                    Value
+                                                                )
+                                                            }
+                                                            _ => (),
+                                                        }
+                                                    }
+                                                }
+                                                return var;
+                                            }
+                                            _ => (),
+                                        }
+
+                                        return Value::Empty;
+                                    }
+                                    _ => (),
+                                }
+                                let left = self.gen_expression(oleft);
+                                let right = self.gen_expression(oright);
                                 match left.get_type() {
                                     Type::Integer { signed, .. } => {
                                         let func = match c {
@@ -143,8 +305,8 @@ impl Module {
                             }
                         };
 
-                        let left = self.gen_expression(left);
-                        let right = self.gen_expression(right);
+                        let left = self.gen_expression(oleft);
+                        let right = self.gen_expression(oright);
 
                         let op =
                             check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
@@ -159,8 +321,8 @@ impl Module {
                     }
                 };
 
-                let left = self.gen_expression(left);
-                let right = self.gen_expression(right);
+                let left = self.gen_expression(oleft);
+                let right = self.gen_expression(oright);
 
                 check!(self, self.builder.create_bin_op(&left, &right, func), Value)
             }
@@ -251,10 +413,14 @@ impl Module {
                 let sym = self.symbol_root.borrow();
                 let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), str);
 
-                match &sym.unwrap().value {
-                    SymbolValue::Variable(v) => v.clone(),
-                    SymbolValue::Funtion(v) => v.clone(),
-                    _ => panic!("sdf"),
+                if let Some(sym) = sym {
+                    match &sym.value {
+                        SymbolValue::Variable(v) => v.clone(),
+                        SymbolValue::Funtion(v) => v.clone(),
+                        _ => Value::Empty,
+                    }
+                } else {
+                    Value::Empty
                 }
             }
             Expression::Literal(literal) => self.gen_literal(literal),
@@ -315,7 +481,9 @@ impl Module {
 
                     let else_const = check!(self, self.builder.is_constant(&if_ret), Value);
 
-                    if !(if_const && else_const && if_n == 0 && else_n == 0 || if_n <= 1 && else_n <= 1) {
+                    if !(if_const && else_const && if_n == 0 && else_n == 0
+                        || if_n <= 1 && else_n <= 1)
+                    {
                         self.builder.set_position_end(&*self.current_block.borrow());
                         check!(
                             self,

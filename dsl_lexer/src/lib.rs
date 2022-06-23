@@ -230,6 +230,13 @@ impl Token {
     pub fn token_type(&self) -> TokenKind {
         self.token_type.clone()
     }
+
+    pub fn as_string(&self) -> &String {
+        match &self.token_type {
+            TokenKind::Ident(i) => i,
+            _ => panic!("Not an identifier!"),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

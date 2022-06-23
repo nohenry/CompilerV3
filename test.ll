@@ -1,26 +1,25 @@
 ; ModuleID = 'test/test.dsl'
 source_filename = "test/test.dsl"
 
+%Data = type { i32, %Data1 }
+%Data1 = type { i32, i32 }
+
 declare void @printf(i8*)
 
 define void @main(i32 %0) {
   %2 = alloca i32, align 4
   store i32 %0, i32* %2, align 4
-  %3 = alloca i32, align 4
-  %4 = load i32, i32* %2, align 4
-  %5 = icmp sgt i32 %4, 5
-  br i1 %5, label %6, label %7
-
-6:                                                ; preds = %1
-  br label %10
-
-7:                                                ; preds = %1
-  %8 = load i32, i32* %2, align 4
-  %9 = add i32 %8, 4
-  br label %10
-
-10:                                               ; preds = %7, %6
-  %11 = phi i32 [ 4, %6 ], [ %9, %7 ]
-  store i32 %11, i32* %3, align 4
+  %3 = alloca %Data, align 8
+  %4 = getelementptr inbounds %Data, %Data* %3, i32 0, i32 1
+  %5 = getelementptr inbounds %Data1, %Data1* %4, i32 0, i32 0
+  store i32 15, i32* %5, align 4
+  %6 = getelementptr inbounds %Data1, %Data1* %4, i32 0, i32 1
+  store i32 20, i32* %6, align 4
+  %7 = getelementptr inbounds %Data, %Data* %3, i32 0, i32 0
+  store i32 10, i32* %7, align 4
+  %8 = alloca %Data1, align 8
+  %9 = getelementptr inbounds %Data, %Data* %3, i32 0, i32 1
+  %10 = load %Data1, %Data1* %9, align 8
+  store %Data1 %10, %Data1* %8, align 4
   ret void
 }

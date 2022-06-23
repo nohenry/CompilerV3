@@ -1,13 +1,19 @@
 
-struct Data {
-    int x;
-    int y;
+struct Data1 {
+    int u;
+    int v;
 };
 
-char t[] = "fslkdjflkj";
+
+struct Data {
+    int x;
+    struct Data1 d;
+};
+
 
 int main(int argc)
 {
-    printf("Hello");
-    // struct Data data = {.x = argc, .y = 7};
+    struct Data data = {.x = argc, .d = {.u = 2, .v = 8}};
+    asm ("nop");
+    int d = data.d.u;
 }
