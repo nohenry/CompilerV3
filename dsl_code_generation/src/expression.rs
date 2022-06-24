@@ -216,10 +216,16 @@ impl Module {
                                                                     Value
                                                                 )
                                                             }
-                                                            SymbolValue::Funtion(func @ Value::Function {..}) => {
+                                                            SymbolValue::Funtion(
+                                                                func @ (Value::Function { .. }
+                                                                | Value::FunctionTemplate {
+                                                                    ..
+                                                                }),
+                                                            ) => {
                                                                 // sym = func;
                                                                 return func.clone();
                                                             }
+
                                                             _ => (),
                                                         }
                                                     }
@@ -700,7 +706,10 @@ impl Module {
                             let mut pram_iter = ty_params.iter();
 
                             while let Some(p) = gens.next() {
-                                let (name, bounds) = pram_iter.next().unwrap();
+                                let Some((name, bounds)) = pram_iter.next() else {
+                                    self.add_error(format!("Extra generic parameter in function call!"));
+                                    break;
+                                };
                                 if let Some(sym) = current.children.get_mut(name) {
                                     match &mut sym.value {
                                         SymbolValue::Generic(ty, _) => {

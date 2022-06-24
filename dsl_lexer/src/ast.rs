@@ -228,7 +228,7 @@ pub enum Expression {
     LoopExpression(LoopExpression),
 
     Block(/* Statements */ Vec<ParseNode>, Range),
-    Generic(Token, Vec<Type>, Range),
+    Generic(Box<Expression>, Vec<Type>, Range),
 }
 
 impl Expression {
@@ -452,7 +452,11 @@ impl GenericType {
             _ => panic!(),
         };
 
-        Expression::Generic(name, self.arguments, self.range)
+        Expression::Generic(
+            Box::new(Expression::Identifier(name)),
+            self.arguments,
+            self.range,
+        )
     }
 }
 

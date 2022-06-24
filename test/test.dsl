@@ -5,7 +5,7 @@ template Data {
 }
 
 action Data {
-    potato() => {
+    potato<T>(a: T) => {
 
     }
 }
@@ -15,5 +15,5 @@ main(x: int32) => {
         x: 10,
         y: 20 
     }
-    data.potato()
+    data.potato<int32>(5)
 }

@@ -368,7 +368,7 @@ fn parse_function_call(
     let cp = expect(tokens, TokenKind::CloseParen)?;
     let start = to_be_called.get_range().0;
     let (to_be_called, generic) = if let Expression::Generic(ident, args, _) = to_be_called {
-        (Expression::Identifier(ident), Some(args))
+        (*ident, Some(args))
     } else {
         (to_be_called, None)
     };
@@ -585,6 +585,28 @@ fn parse_operator_expression(
 
                 let lleft = left?;
                 let right = parse_expression(tokens, prec)?;
+                let right = if let (OperatorKind::Dot, Expression::Generic(tok, prms, rng)) =
+                    (o.operator, &right)
+                {
+                    let right = &*tok;
+                    let start = lleft.get_range().0;
+                    let end = right.get_range().1;
+                    let be = BinaryExpression {
+                        left: Box::new(lleft),
+                        operator: o.operator,
+                        right: right.clone(),
+                        range: (start, end),
+                    };
+                    left = Ok(Expression::Generic(
+                        Box::new(Expression::BinaryExpression(be)),
+                        prms.clone(),
+                        rng.clone(),
+                    ));
+
+                    return parse_function_call(tokens, left?);
+                } else {
+                    right
+                };
                 let start = lleft.get_range().0;
                 let end = right.get_range().1;
                 let be = BinaryExpression {
