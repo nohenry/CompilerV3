@@ -41,7 +41,6 @@ pub struct CodeGenError {
     pub message: String,
 }
 
-
 #[macro_export]
 macro_rules! check {
     ($self:ident,$e:expr,$empty:ident) => {

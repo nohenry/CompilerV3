@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 use dsl_errors::CodeGenError;
-use dsl_lexer::ast::{FunctionSignature, ParseNode};
+use dsl_lexer::ast::{FunctionSignature, ParseNode, TypeSymbol};
 use dsl_util::{CreateParent, Grouper, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
@@ -419,6 +419,20 @@ pub enum Type {
         fields: LinkedHashMap<String, Type>,
         path: Vec<String>,
     },
+    TemplateTemplate {
+        // llvm_type: LLVMTypeRef,
+        path: Vec<String>,
+        fields: Vec<TypeSymbol>,
+        // path: Vec<String>,
+        ty_params: LinkedHashMap<String, GenericType>,
+
+        existing: HashMap<Vec<String>, Vec<String>>,
+        specialization: HashMap<Vec<String>, Vec<String>>,
+    },
+    Generic {
+        base_type: Box<Type>,
+        parameters: Vec<Type>,
+    },
 }
 
 impl Type {
@@ -441,7 +455,9 @@ impl Type {
             Self::Reference { llvm_type, .. } => *llvm_type,
             Self::Function { llvm_type, .. } => unsafe { LLVMPointerType(*llvm_type, 0) },
             Self::Template { llvm_type, .. } => *llvm_type,
-            Self::Empty => panic!("Called on unkown value!"),
+            Self::Empty | Self::TemplateTemplate { .. } | Self::Generic { .. } => {
+                panic!("Called on unkown value!")
+            }
         }
     }
 
@@ -464,7 +480,6 @@ impl Type {
             _ => None,
         }
     }
-
 }
 
 impl Display for Type {
@@ -526,7 +541,13 @@ impl Display for Type {
                 write!(f, "string")
             }
             Self::Template { .. } => {
-                write!(f, "")
+                write!(f, "**Template**")
+            }
+            Self::TemplateTemplate { .. } => {
+                write!(f, "**TemplateTemplate**")
+            }
+            Self::Generic { .. } => {
+                write!(f, "**Generic**")
             } // Self::(GenericType {
               //     arguments,
               //     base_type,

@@ -1,19 +1,14 @@
 
-template Data {
-    x: int32
-    y: int32
+template Data<T> {
+    x: T
 }
 
-action Data {
-    potato<T>(a: T) => {
+value<T>(b: T) => {
 
-    }
 }
 
 main(x: int32) => {
-    let data = Data {
-        x: 10,
-        y: 20 
-    }
-    data.potato<int32>(5)
+    let d = Data {
+        x: 0
+    } 
 }

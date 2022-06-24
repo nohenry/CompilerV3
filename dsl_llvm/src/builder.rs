@@ -904,7 +904,11 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_struct_named(&self, path: &[String], name: &String) -> Result<Type, CodeGenError> {
+    pub fn create_struct_named(
+        &self,
+        path: &[String],
+        name: &String,
+    ) -> Result<Type, CodeGenError> {
         let name = CString::new(name.as_str()).unwrap();
         let value = unsafe { LLVMStructCreateNamed(LLVMGetGlobalContext(), name.as_ptr()) };
 
@@ -912,7 +916,7 @@ impl IRBuilder {
         Ok(Type::Template {
             llvm_type: value,
             fields: LinkedHashMap::new(),
-            path: Vec::from(path)
+            path: Vec::from(path),
         })
     }
 
@@ -963,7 +967,7 @@ impl IRBuilder {
         Ok(Type::Template {
             llvm_type: value,
             fields,
-            path: Vec::from(path)
+            path: Vec::from(path),
         })
     }
 

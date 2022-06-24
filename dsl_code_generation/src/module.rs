@@ -238,6 +238,11 @@ impl Module {
         format!("{}-{}", mng, name)
     }
 
+    pub fn get_mangled_name_with_path(&self, path: &[String], name: &String) -> String {
+        let mng = path.join("-");
+        format!("{}-{}", mng, name)
+    }
+
     pub fn add_error(&self, message: String) {
         self.errors.borrow_mut().push(CodeGenError { message });
     }

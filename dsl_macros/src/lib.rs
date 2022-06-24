@@ -3,7 +3,6 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree};
 use quote::quote;
 
-
 #[proc_macro]
 pub fn create_entry(items: TokenStream) -> TokenStream {
     let mut iter = proc_macro2::TokenStream::from(items).into_iter();

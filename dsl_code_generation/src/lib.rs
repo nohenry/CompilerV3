@@ -1,4 +1,5 @@
 #![feature(let_else)]
+#![feature(box_patterns)]
 
 mod expression;
 mod literal;

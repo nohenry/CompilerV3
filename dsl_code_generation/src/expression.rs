@@ -74,7 +74,6 @@ impl Module {
                                             &self.current_symbol.borrow(),
                                         );
 
-                                        // let mut current = self.current_symbol
                                         fn trav<'a>(arr: &mut Vec<String>, b: &BinaryExpression) {
                                             match (&*b.left, &*b.right, &b.operator) {
                                                 (
@@ -82,51 +81,6 @@ impl Module {
                                                     Expression::Identifier(r),
                                                     OperatorKind::Dot,
                                                 ) => {
-                                                    // let sym = module.find_up_chain(
-                                                    //     root,
-                                                    //     &module.current_symbol.borrow(),
-                                                    //     l.as_string(),
-                                                    // );
-                                                    // if let Some(sym) = sym {
-                                                    //     {
-                                                    //         (F)(sym, &Type::Empty, data);
-                                                    //     }
-                                                    //     match &sym.value {
-                                                    //         SymbolValue::Template(
-                                                    //             Type::Template { fields, .. },
-                                                    //         ) => {}
-                                                    //         SymbolValue::Variable(
-                                                    //             Value::Variable {
-                                                    //                 variable_type,
-                                                    //                 ..
-                                                    //             },
-                                                    //         ) => {
-                                                    //             if let Some(fields) =
-                                                    //                 variable_type.resolve_path()
-                                                    //             {
-                                                    //                 println!("{:?}", fields);
-                                                    //                 if let Some(Symbol {
-                                                    //                     children,
-                                                    //                     ..
-                                                    //                 }) = module
-                                                    //                     .get_symbol(root, &fields)
-                                                    //                 {
-                                                    //                     if let Some(c) = children
-                                                    //                         .get(r.as_string())
-                                                    //                     {
-                                                    //                         *next = c;
-                                                    //                         (F)(
-                                                    //                             c,
-                                                    //                             variable_type,
-                                                    //                             data,
-                                                    //                         );
-                                                    //                     }
-                                                    //                 }
-                                                    //             }
-                                                    //         }
-                                                    //         _ => (),
-                                                    //     }
-                                                    // }
                                                     arr.push(l.as_string().clone());
                                                     arr.push(r.as_string().clone());
                                                 }
@@ -146,7 +100,6 @@ impl Module {
                                         if let Some(current) = current {
                                             trav(&mut chain, bin);
                                         }
-                                        println!("{:?}", chain);
 
                                         let mut citer = chain.iter();
 
@@ -164,8 +117,6 @@ impl Module {
                                         ) else {
                                             return Value::Empty
                                         };
-
-                                        println!("{:?}", sym);
 
                                         match &sym.value {
                                             SymbolValue::Variable(
@@ -480,8 +431,6 @@ impl Module {
                         _ => 0,
                     };
 
-                    // let p = unsafe {LLVMIsConstant(if_ret.get_raw_value().unwrap())};
-                    // println!("{}", p);
                     let if_const = check!(self, self.builder.is_constant(&if_ret), Value);
 
                     self.builder.set_position_end(&else_body);
@@ -772,6 +721,7 @@ impl Module {
                                 let mut sym = self.symbol_root.borrow();
                                 let current = self.get_symbol(&mut sym, &special.1);
 
+                                // FIXME: idk check if three of these are really needed
                                 if let Some(Symbol {
                                     value:
                                         SymbolValue::Funtion(Value::FunctionTemplate {
@@ -827,9 +777,6 @@ impl Module {
                             };
                             let path = &path[..path.len() - 1];
                             let name = self.get_next_name(path, last.clone());
-
-                            let mut typesda = Vec::from(path);
-                            typesda.push(name.clone());
 
                             let function_type = self.builder.get_fn(return_type.clone(), &types);
 
@@ -966,7 +913,7 @@ impl Module {
                             existing.insert(fn_types, npath.clone());
                         }
 
-                        let current = self.get_symbol_mut(&mut sym, &npath);
+                        let current = self.get_symbol(&mut sym, &npath);
                         if let Some(Symbol {
                             value: SymbolValue::Funtion(val),
                             ..

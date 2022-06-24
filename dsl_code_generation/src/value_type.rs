@@ -7,7 +7,10 @@ use llvm_sys::core::{
 };
 
 use dsl_lexer::{
-    ast::{ArrayInitializer, ArrayType, Expression, FunctionType, Literal, ReferenceType, Type},
+    ast::{
+        ArrayInitializer, ArrayType, Expression, FunctionType, GenericType, Literal, ReferenceType,
+        Type,
+    },
     TokenKind,
 };
 
@@ -143,6 +146,14 @@ impl Module {
 
                 dsl_symbol::Type::Empty
             }
+            Type::GenericType(GenericType {
+                base_type,
+                arguments,
+                ..
+            }) => dsl_symbol::Type::Generic {
+                base_type: Box::new(self.gen_type(base_type)),
+                parameters: arguments.iter().map(|f| self.gen_type(f)).collect(),
+            },
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
                 dsl_symbol::Type::Empty
