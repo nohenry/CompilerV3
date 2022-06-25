@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use dsl_errors::check;
-use dsl_util::NULL_STR;
+use dsl_util::{TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
-        LLVMArrayType, LLVMBuildGlobalString, LLVMConstArray, LLVMConstInt, LLVMConstReal,
-        LLVMConstString, LLVMFloatType, LLVMInt1Type, LLVMInt32Type, LLVMInt8Type,
+        LLVMArrayType, LLVMConstArray, LLVMConstInt, LLVMConstReal, LLVMFloatType, LLVMInt1Type,
+        LLVMInt32Type, LLVMInt8Type,
     },
     LLVMCreateStringLiteral,
 };
@@ -209,21 +209,58 @@ impl Module {
                             } else {
                                 let path = &path[..path.len() - 1];
                                 let name = self.get_next_name(path, last.clone());
+                                let (template, name) = {
+                                    let sym = self.symbol_root.borrow();
+                                    let opvars = if let Some(special) = specialization {
+                                        let current = self.get_symbol(&sym, &special.1);
 
-                                let mut tyep = Vec::from(path);
-                                tyep.push(name.clone());
+                                        if let Some(Symbol {
+                                            value:
+                                                SymbolValue::Template(Type::TemplateTemplate {
+                                                    fields,
+                                                    ..
+                                                }),
+                                            ..
+                                        }) = current
+                                        {
+                                            Some(fields)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
 
-                                for f in fields.iter() {
-                                    let name = f.symbol.as_string();
-                                    vars.insert(name.clone(), self.gen_type(&f.symbol_type));
-                                }
+                                    let mut tyep = Vec::from(path);
+                                    tyep.push(name.clone());
 
-                                let mng = self.get_mangled_name_with_path(path, &name);
-                                let template = check!(
-                                    self,
-                                    self.builder.create_struct(&path, &mng, vars.clone()),
-                                    Value
-                                );
+                                    if let Some(opvars) = opvars {
+                                        for f in opvars.iter() {
+                                            let name = f.symbol.as_string();
+                                            vars.insert(
+                                                name.clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            );
+                                        }
+                                    } else {
+                                        for f in fields.iter() {
+                                            let name = f.symbol.as_string();
+                                            vars.insert(
+                                                name.clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            );
+                                        }
+                                    };
+
+                                    let mng = self.get_mangled_name_with_path(path, &name);
+                                    let template = check!(
+                                        self,
+                                        self.builder.create_struct(&path, &mng, vars.clone()),
+                                        Value
+                                    );
+
+                                    (template, name)
+                                };
 
                                 self.add_and_set_symbol_from_path(
                                     path,
@@ -239,7 +276,6 @@ impl Module {
 
                         self.current_symbol.replace(old_sym);
 
-                        println!("{:?}", name);
 
                         if let Some(name) = name {
                             let mut npath = Vec::from(&path[..path.len() - 1]);
@@ -248,16 +284,31 @@ impl Module {
                             let mut sym = self.symbol_root.borrow_mut();
 
                             let tmpl_templ = self.get_symbol_mut(&mut sym, &path);
+                            if let Some(Symbol {
+                                value:
+                                    SymbolValue::Template(Type::TemplateTemplate { existing, .. }),
+                                ..
+                            }) = tmpl_templ
+                            {
+                                if existing_impl.is_none() {
+                                    existing.insert(fn_types, npath.clone());
+                                }
+                            }
 
                             let current = self.get_symbol(&mut sym, &npath);
                             if let Some(Symbol {
-                                value: SymbolValue::Template(val),
+                                value: SymbolValue::Template(val @ Type::Template { fields, .. }),
                                 ..
                             }) = current
                             {
                                 let vvv: Option<Vec<(String, Value)>> = vals.into_iter().map(|(name, val)| {
 
-                                    let res = vars.get(&name);
+                                    let res = if existing_impl.is_none() {
+                                        vars.get(&name)
+                                    } else {
+                                        fields.get(&name)
+                                    };
+
                                     let mut str_val = None;
                                     if let Some(field) = res {
                                         let value = val.weak_cast(field, self.builder.get_builder());
@@ -271,7 +322,7 @@ impl Module {
                                         },
                                         };
                                     } else {
-                                        self.add_error(format!("Unexpected field initializer `{}`", name))
+                                        self.add_error(format!("Unexpected field initializer `{}` (1)", name))
                                     }
                                     str_val
                                 }).collect();
@@ -338,41 +389,94 @@ impl Module {
                             }
                         }
 
+                        let specialization = specialization.iter().find(|(f, _)| {
+                            for (a, b) in f.iter().zip(fn_types.iter()) {
+                                if a == "" {
+                                    return true;
+                                } else if a != b {
+                                    return false;
+                                } else {
+                                    return true;
+                                }
+                            }
+                            true
+                        });
+                        let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
+
                         let mut vars = LinkedHashMap::new();
 
                         let name = if let Some(last) = path.last() {
-                            let path = &path[..path.len() - 1];
-                            let name = self.get_next_name(path, last.clone());
+                            if let Some(ty) = existing_impl {
+                                Some(ty.1.last().unwrap().clone())
+                            } else {
+                                let path = &path[..path.len() - 1];
+                                let name = self.get_next_name(path, last.clone());
 
-                            let mut tyep = Vec::from(path);
-                            tyep.push(name.clone());
+                                let (template, name) = {
+                                    let sym = self.symbol_root.borrow();
+                                    let opvars = if let Some(special) = specialization {
+                                        let current = self.get_symbol(&sym, &special.1);
 
-                            for f in fields.iter() {
-                                let name = f.symbol.as_string();
-                                vars.insert(name.clone(), self.gen_type(&f.symbol_type));
+                                        if let Some(Symbol {
+                                            value:
+                                                SymbolValue::Template(Type::TemplateTemplate {
+                                                    fields,
+                                                    ..
+                                                }),
+                                            ..
+                                        }) = current
+                                        {
+                                            Some(fields)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    let mut tyep = Vec::from(path);
+                                    tyep.push(name.clone());
+
+                                    if let Some(opvars) = opvars {
+                                        for f in opvars.iter() {
+                                            let name = f.symbol.as_string();
+                                            vars.insert(
+                                                name.clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            );
+                                        }
+                                    } else {
+                                        for f in fields.iter() {
+                                            let name = f.symbol.as_string();
+                                            vars.insert(
+                                                name.clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            );
+                                        }
+                                    };
+
+                                    let mng = self.get_mangled_name_with_path(path, &name);
+                                    let template = check!(
+                                        self,
+                                        self.builder.create_struct(&path, &mng, vars.clone()),
+                                        Value
+                                    );
+                                    (template, name)
+                                };
+
+                                self.add_and_set_symbol_from_path(
+                                    path,
+                                    &name,
+                                    SymbolValue::Template(template),
+                                );
+
+                                Some(name)
                             }
-
-                            let mng = self.get_mangled_name_with_path(path, &name);
-                            let template = check!(
-                                self,
-                                self.builder.create_struct(&path, &mng, vars.clone()),
-                                Value
-                            );
-
-                            self.add_and_set_symbol_from_path(
-                                path,
-                                &name,
-                                SymbolValue::Template(template),
-                            );
-
-                            Some(name)
                         } else {
                             None
                         };
 
                         self.current_symbol.replace(old_sym);
-
-                        println!("{:?}", name);
 
                         if let Some(name) = name {
                             let mut npath = Vec::from(&path[..path.len() - 1]);
@@ -381,16 +485,30 @@ impl Module {
                             let mut sym = self.symbol_root.borrow_mut();
 
                             let tmpl_templ = self.get_symbol_mut(&mut sym, &path);
-
+                            if let Some(Symbol {
+                                value:
+                                    SymbolValue::Template(Type::TemplateTemplate { existing, .. }),
+                                ..
+                            }) = tmpl_templ
+                            {
+                                if existing_impl.is_none() {
+                                    existing.insert(fn_types, npath.clone());
+                                }
+                            }
                             let current = self.get_symbol(&mut sym, &npath);
                             if let Some(Symbol {
-                                value: SymbolValue::Template(val),
+                                value: SymbolValue::Template(val @ Type::Template { fields, .. }),
                                 ..
                             }) = current
                             {
                                 let vvv: Option<Vec<(String, Value)>> = vals.into_iter().map(|(name, val)| {
 
-                                    let res = vars.get(&name);
+                                    let res = if existing_impl.is_none() {
+                                        vars.get(&name)
+                                    } else {
+                                        fields.get(&name)
+                                    };
+
                                     let mut str_val = None;
                                     if let Some(field) = res {
                                         let value = val.weak_cast(field, self.builder.get_builder());
@@ -404,7 +522,7 @@ impl Module {
                                         },
                                         };
                                     } else {
-                                        self.add_error(format!("Unexpected field initializer `{}`", name))
+                                        self.add_error(format!("Unexpected field initializer `{}` (2)", name))
                                     }
                                     str_val
                                 }).collect();
@@ -440,7 +558,7 @@ impl Module {
                                     ));},
                                 };
                             } else {
-                                self.add_error(format!("Unexpected field initializer `{}`", name))
+                                self.add_error(format!("Unexpected field initializer `{}` (3)", name))
                             }
                             str_val
                         }).collect();

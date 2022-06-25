@@ -9,7 +9,7 @@ use dsl_lexer::ast::{
     TemplateDecleration, TypeSymbol, VariableDecleration,
 };
 use dsl_lexer::TokenKind;
-use dsl_util::cast;
+use dsl_util::{cast, TreeDisplay};
 
 use crate::module::CodeGenPass;
 
@@ -33,13 +33,14 @@ impl Module {
                 if let (Some(generic), CodeGenPass::Symbols) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
-                    let mng = self.get_mangled_name(name);
                     let mut path = self.current_symbol.borrow().clone();
                     path.push(name.clone());
-                    // let template =
-                    //     check!(self, self.builder.create_struct_named(&pth, &mng), Value);
 
-                    let ty_params = check!(self, self.gen_generic(generic), Value);
+                    let ty_params = if let Ok(ty) = self.gen_generic(generic) {
+                        ty
+                    } else {
+                        return Value::Empty;
+                    };
 
                     self.add_and_set_symbol(
                         &name,
@@ -58,11 +59,100 @@ impl Module {
                 } else if let (Some(generic), CodeGenPass::SymbolsSpecialization) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
-                } else if let (Some(_), CodeGenPass::Values) =
+                    let mut path = self.current_symbol.borrow().clone();
+                    path.push(name.clone());
+
+                    let ty_params = if let Ok(ty) = self.gen_special_generic(generic) {
+                        ty
+                    } else {
+                        return Value::Empty;
+                    };
+
+                    let name = self.get_next_name(&path[..path.len() - 1], name.to_string());
+
+                    {
+                        let mut cur_sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut cur_sym, &path);
+
+                        let mut npath = Vec::from(&path[..path.len() - 1]);
+                        npath.push(name.clone());
+
+                        let types = ty_params
+                            .iter()
+                            .map(|f| match f.1 {
+                                GenericType::Generic(_) => "".to_string(),
+                                GenericType::Specialization(s) => s.to_string(),
+                            })
+                            .collect();
+                        if let Some(Symbol {
+                            value:
+                                SymbolValue::Template(Type::TemplateTemplate { specialization, .. }),
+                            ..
+                        }) = current
+                        {
+                            specialization.insert(types, npath);
+                        }
+                    }
+
+                    self.add_and_set_symbol(
+                        &name,
+                        SymbolValue::Template(Type::TemplateTemplate {
+                            fields: fields.clone(),
+                            path,
+                            ty_params,
+                            existing: HashMap::new(),
+                            specialization: HashMap::new(),
+                        }),
+                    );
+
+                    check!(self, self.add_special_generic_children(generic), Value);
+
+                    self.pop_symbol();
+                } else if let (Some(generic), CodeGenPass::Values) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
                     let mut path = self.current_symbol.borrow().clone();
                     path.push(name.clone());
+
+                    let path = {
+                        let mut root_sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut root_sym, &path);
+
+                        if let Ok(ty) = self.gen_special_generic(generic) {
+                            if let Some(Symbol {
+                                value:
+                                    SymbolValue::Template(Type::TemplateTemplate {
+                                        specialization, ..
+                                    }),
+                                ..
+                            }) = current
+                            {
+                                let st: Vec<String> = ty.values().map(|v| v.to_string()).collect();
+                                let specialization = specialization.iter().find(|(f, _)| {
+                                    for (a, b) in f.iter().zip(st.iter()) {
+                                        if a == "" {
+                                            return true;
+                                        } else if a != b {
+                                            return false;
+                                        } else {
+                                            return true;
+                                        }
+                                    }
+                                    true
+                                });
+
+                                if let Some((_, path)) = specialization {
+                                    path.clone()
+                                } else {
+                                    path
+                                }
+                            } else {
+                                path
+                            }
+                        } else {
+                            path
+                        }
+                    };
 
                     let old_sym = self.current_symbol.replace(path);
 
@@ -71,23 +161,27 @@ impl Module {
                         .map(|f| (f.symbol.as_string(), self.gen_type(&f.symbol_type)))
                         .collect();
 
-                    let mut root_sym = self.symbol_root.borrow_mut();
-                    let current = self.get_symbol_mut(&mut root_sym, &self.current_symbol.borrow());
-                    if let Some(Symbol {
-                        value: SymbolValue::Template(Type::TemplateTemplate { .. }),
-                        children,
-                        ..
-                    }) = current
                     {
-                        for (name, ty) in types.into_iter() {
-                            children.insert(
-                                name.clone(),
-                                Symbol {
-                                    name: name.clone(),
-                                    value: SymbolValue::Field(ty),
-                                    children: LinkedHashMap::new(),
-                                },
-                            );
+                        let mut root_sym = self.symbol_root.borrow_mut();
+                        let current =
+                            self.get_symbol_mut(&mut root_sym, &self.current_symbol.borrow());
+
+                        if let Some(Symbol {
+                            value: SymbolValue::Template(Type::TemplateTemplate { .. }),
+                            children,
+                            ..
+                        }) = current
+                        {
+                            for (name, ty) in types.into_iter() {
+                                children.insert(
+                                    name.clone(),
+                                    Symbol {
+                                        name: name.clone(),
+                                        value: SymbolValue::Field(ty),
+                                        children: LinkedHashMap::new(),
+                                    },
+                                );
+                            }
                         }
                     }
 
@@ -276,7 +370,11 @@ impl Module {
                     let mut path = self.current_symbol.borrow().clone();
                     path.push(name.clone());
 
-                    let ty_params = check!(self, self.gen_generic(generic), Value);
+                    let ty_params = if let Ok(ty) = self.gen_generic(generic) {
+                        ty
+                    } else {
+                        return Value::Empty;
+                    };
 
                     self.add_and_set_symbol(
                         &name,
@@ -298,29 +396,11 @@ impl Module {
                 {
                     let mut path = self.current_symbol.borrow().clone();
                     path.push(name.clone());
-                    let mut ty_params = LinkedHashMap::new();
-                    match &**generic {
-                        ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
-                            let p = parameters.iter().fold(0, |acc, (tok, bounds, specs)| {
-                                if let Some(specs) = specs {
-                                    let str = cast!(&tok.token_type, TokenKind::Ident);
-                                    let ty = self.gen_type(specs);
-                                    ty_params.insert(str.clone(), GenericType::Specialization(ty));
-                                    acc + 1
-                                } else {
-                                    let str = cast!(&tok.token_type, TokenKind::Ident);
-                                    let bounds = bounds
-                                        .clone()
-                                        .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
-                                    ty_params.insert(str.clone(), GenericType::Generic(bounds));
-                                    acc
-                                }
-                            });
-                            if p == 0 {
-                                return Value::Empty;
-                            }
-                        }
-                        _ => (),
+
+                    let ty_params = if let Ok(ty) = self.gen_special_generic(generic) {
+                        ty
+                    } else {
+                        return Value::Empty;
                     };
 
                     let name = self.get_next_name(&path[..path.len() - 1], name.to_string());
@@ -361,35 +441,7 @@ impl Module {
                         }),
                     );
 
-                    {
-                        let mut cur_sym = self.symbol_root.borrow_mut();
-                        let current =
-                            self.get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
-
-                        if let Some(c) = current {
-                            match &**generic {
-                                ParseNode::GenericParameters(GenericParameters {
-                                    parameters,
-                                    ..
-                                }) => {
-                                    parameters.iter().for_each(|(ident, bounds, specs)| {
-                                        if let Some(specs) = specs {
-                                            let ty = self.gen_type(specs);
-                                            c.add_child(
-                                                cast!(&ident.token_type, TokenKind::Ident),
-                                                SymbolValue::Generic(
-                                                    Type::Empty,
-                                                    GenericType::Specialization(ty),
-                                                ),
-                                            )
-                                        } else {
-                                        }
-                                    });
-                                }
-                                _ => (),
-                            };
-                        }
-                    }
+                    check!(self, self.add_special_generic_children(generic), Value);
 
                     self.pop_symbol();
                 } else {
@@ -596,6 +648,41 @@ impl Module {
         }
     }
 
+    pub fn gen_special_generic(
+        &self,
+        node: &ParseNode,
+    ) -> Result<LinkedHashMap<String, GenericType>, CodeGenError> {
+        match node {
+            ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
+                let mut ty_params = LinkedHashMap::new();
+                let p = parameters.iter().fold(0, |acc, (tok, bounds, specs)| {
+                    if let Some(specs) = specs {
+                        let str = cast!(&tok.token_type, TokenKind::Ident);
+                        let ty = self.gen_type(specs);
+                        ty_params.insert(str.clone(), GenericType::Specialization(ty));
+                        acc + 1
+                    } else {
+                        let str = cast!(&tok.token_type, TokenKind::Ident);
+                        let bounds = bounds
+                            .clone()
+                            .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
+                        ty_params.insert(str.clone(), GenericType::Generic(bounds));
+                        acc
+                    }
+                });
+                if p == 0 {
+                    return Err(CodeGenError {
+                        message: "Unable to parse generic parameters (3)".into(),
+                    });
+                }
+                Ok(ty_params)
+            }
+            _ => Err(CodeGenError {
+                message: "Unable to parse generic parameters (4)".into(),
+            }),
+        }
+    }
+
     pub fn add_generic_children(&self, node: &ParseNode) -> Result<(), CodeGenError> {
         match node {
             ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
@@ -620,6 +707,27 @@ impl Module {
                             cast!(&ident.token_type, TokenKind::Ident),
                             SymbolValue::Generic(Type::Empty, GenericType::Generic(bounds)),
                         )
+                    }
+                });
+                Ok(())
+            }
+            _ => Err(CodeGenError {
+                message: "Unable to add generic parameter to symbol tree!".into(),
+            }),
+        }
+    }
+
+    pub fn add_special_generic_children(&self, node: &ParseNode) -> Result<(), CodeGenError> {
+        match node {
+            ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
+                parameters.iter().for_each(|(ident, bounds, specs)| {
+                    if let Some(specs) = specs {
+                        let ty = self.gen_type(specs);
+                        self.add_symbol(
+                            cast!(&ident.token_type, TokenKind::Ident),
+                            SymbolValue::Generic(Type::Empty, GenericType::Specialization(ty)),
+                        )
+                    } else {
                     }
                 });
                 Ok(())

@@ -780,11 +780,13 @@ impl Module {
 
                             let function_type = self.builder.get_fn(return_type.clone(), &types);
 
+
+                            let mng = self.get_mangled_name_with_path(path, &name);
                             let function = check!(
                                 self,
                                 self.builder.add_function(
                                     function_type,
-                                    name.to_string(),
+                                    mng,
                                     self.module
                                 ),
                                 Value

@@ -21,6 +21,15 @@ pub enum GenericType {
     Specialization(Type),
 }
 
+impl ToString for GenericType {
+    fn to_string(&self) -> String {
+        match self {
+            GenericType::Generic(_) => "".to_string(),
+            GenericType::Specialization(sp) => sp.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Empty,
