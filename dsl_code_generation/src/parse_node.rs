@@ -28,7 +28,7 @@ impl Module {
                 token,
                 ..
             }) => {
-                let name = cast!(&token.token_type, TokenKind::Ident);
+                let name = token.as_string();
 
                 if let (Some(generic), CodeGenPass::Symbols) =
                     (generic, &*self.code_gen_pass.borrow())
@@ -189,7 +189,7 @@ impl Module {
                 } else {
                     match &*self.code_gen_pass.borrow() {
                         CodeGenPass::Symbols => {
-                            let mng = self.get_mangled_name(name);
+                            let mng = self.get_mangled_name(&name);
                             let mut pth = self.current_symbol.borrow().clone();
                             pth.push(name.clone());
                             let template =
@@ -212,12 +212,12 @@ impl Module {
                                     value: SymbolValue::Template(ty),
                                     children,
                                     ..
-                                }) = children.get_mut(name)
+                                }) = children.get_mut(&name)
                                 {
                                     let mut vars = LinkedHashMap::new();
 
                                     for (f, ty) in fields.iter().zip(types.iter()) {
-                                        let name = cast!(&f.symbol.token_type, TokenKind::Ident);
+                                        let name = f.symbol.as_string();
                                         vars.insert(name.clone(), ty.clone());
 
                                         children.insert(
@@ -241,12 +241,25 @@ impl Module {
             ParseNode::ActionDecleration(ActionDecleration {
                 template_type,
                 body,
+                generic,
                 ..
             }) => {
-                let Type::Template {path, ..} = self.gen_type(template_type) else {
-                    // TODO: errors
-                    return Value::Empty;
+                let temp = self.gen_type(template_type);
+                let path = match temp {
+                    Type::TemplateTemplate { .. } => {
+                        // if let CodeGenPass::Symbols = self.code_gen_pass.borrow() {
+
+                        // }
+                        return Value::Empty;
+                        self.add_error(format!(
+                            "Template type `{}` requires a generic argument",
+                            temp
+                        ));
+                    }
+                    Type::Template { path, .. } => path,
+                    _ => return Value::Empty,
                 };
+
                 // let mut root_sym = self.symbol_root.borrow();
                 // let Some(sym) = self.get_symbol(&mut root_sym, &path) else {
                 //     // TODO: errors
@@ -343,10 +356,10 @@ impl Module {
                     }
                 };
 
-                let name = cast!(&identifier.token_type, TokenKind::Ident);
+                let name = identifier.as_string();
                 self.get_current_mut(|f| {
                     if let Some(sym) = f {
-                        sym.add_child(name, SymbolValue::Variable(place_var.clone()));
+                        sym.add_child(&name, SymbolValue::Variable(place_var.clone()));
                     }
                 })
             }
@@ -362,7 +375,7 @@ impl Module {
                 generic,
                 ..
             }) => {
-                let name = cast!(&identifier.token_type, TokenKind::Ident);
+                let name = identifier.as_string();
 
                 if let (Some(generic), CodeGenPass::Symbols) =
                     (generic, &*self.code_gen_pass.borrow())
@@ -448,15 +461,36 @@ impl Module {
                     if let CodeGenPass::Symbols = *self.code_gen_pass.borrow() {
                         let return_type = self.gen_type(return_type);
 
-                        let types: Vec<(String, Type)> = parameters
+                        let types: Option<Vec<(String, Type)>> = parameters
                             .iter()
                             .map(|f| {
-                                (
-                                    cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
-                                    self.gen_type(&f.symbol_type),
-                                )
+                                if &f.symbol.as_string() == "self" {
+                                    let sym = self.symbol_root.borrow();
+                                    let current =
+                                        self.get_symbol(&sym, &self.current_symbol.borrow());
+
+                                    if let Some(Symbol {
+                                        value: SymbolValue::Template(t),
+                                        ..
+                                    }) = current
+                                    {
+                                        Some((f.symbol.as_string().clone(), t.clone().get_ptr()))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    Some((
+                                        f.symbol.as_string().clone(),
+                                        self.gen_type(&f.symbol_type),
+                                    ))
+                                }
                             })
                             .collect();
+
+                        let Some(types) = types else {
+                            //TODO: add error 
+                            return Value::Empty
+                        };
 
                         let function_type = self.builder.get_fn(return_type.clone(), &types);
 
@@ -464,7 +498,7 @@ impl Module {
                             self,
                             self.builder.add_function(
                                 function_type,
-                                self.get_mangled_name(name),
+                                self.get_mangled_name(&name),
                                 self.module
                             ),
                             Value
@@ -574,11 +608,11 @@ impl Module {
                                     for (TypeSymbol { symbol, .. }, alloc) in
                                         parameters.iter().zip(pallocs.into_iter())
                                     {
-                                        let name = cast!(&symbol.token_type, TokenKind::Ident);
+                                        let name = symbol.as_string();
                                         if let Some(Symbol {
                                             value: SymbolValue::Variable(value),
                                             ..
-                                        }) = c.children.get_mut(name)
+                                        }) = c.children.get_mut(&name)
                                         {
                                             *value = alloc
                                         }
@@ -626,7 +660,7 @@ impl Module {
                         if let Some(specs) = specs {
                             Err(())
                         } else {
-                            let str = cast!(&tok.token_type, TokenKind::Ident);
+                            let str = tok.as_string();
                             let bounds = bounds
                                 .clone()
                                 .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
@@ -657,12 +691,12 @@ impl Module {
                 let mut ty_params = LinkedHashMap::new();
                 let p = parameters.iter().fold(0, |acc, (tok, bounds, specs)| {
                     if let Some(specs) = specs {
-                        let str = cast!(&tok.token_type, TokenKind::Ident);
+                        let str = tok.as_string();
                         let ty = self.gen_type(specs);
                         ty_params.insert(str.clone(), GenericType::Specialization(ty));
                         acc + 1
                     } else {
-                        let str = cast!(&tok.token_type, TokenKind::Ident);
+                        let str = tok.as_string();
                         let bounds = bounds
                             .clone()
                             .map(|bnd| bnd.iter().map(|t| self.gen_type(t)).collect());
@@ -690,7 +724,7 @@ impl Module {
                     if let Some(specs) = specs {
                         // let ty = self.gen_type(specs);
                         // c.add_child(
-                        //     cast!(&ident.token_type, TokenKind::Ident),
+                        //     ident.as_string(),
                         //     SymbolValue::Generic(
                         //         Type::Empty,
                         //         GenericType::Specialization(ty),
@@ -704,7 +738,7 @@ impl Module {
                             None
                         };
                         self.add_symbol(
-                            cast!(&ident.token_type, TokenKind::Ident),
+                            &ident.as_string(),
                             SymbolValue::Generic(Type::Empty, GenericType::Generic(bounds)),
                         )
                     }
@@ -724,7 +758,7 @@ impl Module {
                     if let Some(specs) = specs {
                         let ty = self.gen_type(specs);
                         self.add_symbol(
-                            cast!(&ident.token_type, TokenKind::Ident),
+                            &ident.as_string(),
                             SymbolValue::Generic(Type::Empty, GenericType::Specialization(ty)),
                         )
                     } else {

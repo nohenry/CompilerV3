@@ -109,17 +109,26 @@ impl Module {
                 }
             },
             c @ Type::NamedType(token) => {
-                let str = cast!(&token.token_type, TokenKind::Ident);
+                let str = token.as_string();
 
                 let sym = self.symbol_root.borrow();
                 {
                     let current = self.get_symbol(&sym, &self.current_symbol.borrow());
 
                     if let Some(current) = current {
-                        if let Some(al_sym) = current.children.get(str) {
+                        if let Some(al_sym) = current.children.get(&str) {
                             let syysdf = al_sym;
                             match &syysdf.value {
                                 SymbolValue::Generic(ty, bounds) => return ty.clone(),
+                                // SymbolValue::Template(dsl_symbol::Type::TemplateTemplate {
+                                //     ..
+                                // }) => {
+                                //     self.add_error(format!(
+                                //         "Template type `{}` requires a generic argument",
+                                //         str
+                                //     ));
+                                //     return dsl_symbol::Type::Empty;
+                                // }
                                 SymbolValue::Template(ty) => return ty.clone(),
                                 _ => {
                                     self.add_error(format!("Unsupported type {:?}", c));
@@ -131,7 +140,7 @@ impl Module {
                 }
 
                 if let Some(Symbol { value, .. }) =
-                    self.find_up_chain(&sym, &self.current_symbol.borrow(), str)
+                    self.find_up_chain(&sym, &self.current_symbol.borrow(), &str)
                 {
                     match value {
                         SymbolValue::Template(ty) => return ty.clone(),

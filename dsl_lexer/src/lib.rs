@@ -49,7 +49,8 @@ pub enum KeywordKind {
     Export,   // export
     Const,    // const
     Enum,     // enum
-    Yield,
+    Yield,    // yield
+    SELF,     // self
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -231,9 +232,13 @@ impl Token {
         self.token_type.clone()
     }
 
-    pub fn as_string(&self) -> &String {
+    pub fn as_string(&self) -> String {
         match &self.token_type {
-            TokenKind::Ident(i) => i,
+            TokenKind::Ident(i) => i.clone(),
+            TokenKind::Keyword(Keyword {
+                keyword: KeywordKind::SELF,
+                ..
+            }) => "self".to_string(),
             _ => panic!("Not an identifier!"),
         }
     }

@@ -489,6 +489,15 @@ impl Type {
             _ => None,
         }
     }
+
+    pub fn get_ptr(self) -> Type {
+        let ty = self.get_type();
+        let llvm_type = unsafe { LLVMPointerType(ty, 0) };
+        Type::Reference {
+            llvm_type,
+            base_type: Box::new(self),
+        }
+    }
 }
 
 impl Display for Type {
@@ -552,8 +561,12 @@ impl Display for Type {
             Self::Template { .. } => {
                 write!(f, "**Template**")
             }
-            Self::TemplateTemplate { .. } => {
-                write!(f, "**TemplateTemplate**")
+            Self::TemplateTemplate { path, .. } => {
+                if let Some(p) = path.last() {
+                    write!(f, "{}", p)
+                } else {
+                    write!(f, "**Template**")
+                }
             }
             Self::Generic { .. } => {
                 write!(f, "**Generic**")

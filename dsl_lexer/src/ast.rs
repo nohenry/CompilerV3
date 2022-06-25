@@ -252,7 +252,7 @@ impl Expression {
 impl Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expression::Identifier(i) => write!(f, "{}", cast!(&i.token_type, TokenKind::Ident)),
+            Expression::Identifier(i) => write!(f, "{}", i.as_string()),
             Expression::Literal(i) => write!(f, "{}", i),
             Expression::BinaryExpression(b) => write!(f, "{}", b),
             Expression::UnaryExpression(b) => write!(f, "{}", b),
@@ -366,7 +366,7 @@ impl TreeDisplay for FunctionSignature {
                          }| {
                             let grp = Grouper(format!(
                                 "{}: {}",
-                                cast!(&symbol.token_type, TokenKind::Ident),
+                                symbol.as_string(),
                                 symbol_type
                             ));
                             let b: Box<dyn TreeDisplay> = Box::new(grp);
@@ -463,6 +463,8 @@ impl GenericType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Unit,
+    SELF,
+    ConstSelf,
     NamedType(Token),
     Int(u8, Range),
     Uint(u8, Range),
@@ -479,6 +481,8 @@ impl Type {
     pub fn get_range(&self) -> Range {
         match self {
             Type::Unit => default_range(),
+            Type::SELF => default_range(),
+            Type::ConstSelf => default_range(),
             Type::NamedType(t) => t.range,
             Type::Int(_, t) => t.clone(),
             Type::Uint(_, t) => t.clone(),
@@ -491,13 +495,17 @@ impl Type {
             Type::GenericType(t) => t.range,
         }
     }
+
+    
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unit => f.write_str("()"),
-            Self::NamedType(t) => f.write_str(cast!(&t.token_type, TokenKind::Ident)),
+            Self::SELF => f.write_str("Self"),
+            Self::ConstSelf => f.write_str("const Self"),
+            Self::NamedType(t) => f.write_str(&t.as_string()),
             Self::Int(t, _) => write!(f, "int{}", t),
             Self::Uint(t, _) => write!(f, "uint{}", t),
             Self::Bool(_) => write!(f, "bool"),
@@ -724,7 +732,7 @@ impl TreeDisplay for TemplateDecleration {
                          }| {
                             let grp = Grouper(format!(
                                 "{}: {}",
-                                cast!(&symbol.token_type, TokenKind::Ident),
+                                symbol.as_string(),
                                 symbol_type
                             ));
                             let b: Box<dyn TreeDisplay> = Box::new(grp);
@@ -867,7 +875,7 @@ impl Display for SpecBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SpecBody::Function(tok, _) => {
-                write!(f, "{}", cast!(&tok.token_type, TokenKind::Ident),)
+                write!(f, "{}", tok.as_string(),)
             }
         }
     }
@@ -919,7 +927,7 @@ impl TreeDisplay for GenericParameters {
         let (child_name, restraints, specialization) = &self.parameters[index];
         if let Some(res) = &restraints {
             Box::new(CreateParent(
-                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+                child_name.as_string().clone(),
                 res.iter()
                     .map(|f| {
                         let b: &dyn TreeDisplay = f;
@@ -929,12 +937,12 @@ impl TreeDisplay for GenericParameters {
             ))
         } else if let Some(spec) = &specialization {
             Box::new(CreateParent(
-                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+                child_name.as_string().clone(),
                 vec![spec],
             ))
         } else {
             Box::new(Grouper(
-                cast!(&child_name.token_type, TokenKind::Ident).clone(),
+                child_name.as_string().clone(),
             ))
         }
     }

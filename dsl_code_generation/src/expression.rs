@@ -373,10 +373,10 @@ impl Module {
                 )
             }
             Expression::Identifier(i) => {
-                let str = cast!(&i.token_type, TokenKind::Ident);
+                let str = i.as_string();
 
                 let sym = self.symbol_root.borrow();
-                let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), str);
+                let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), &str);
 
                 if let Some(sym) = sym {
                     match &sym.value {
@@ -673,7 +673,7 @@ impl Module {
                             pram_iter.for_each(|(name, bounds)| {
                                 let found = ty.parameters.iter().position(|f| {
                                     if let dsl_lexer::ast::Type::NamedType(t) = &f.symbol_type {
-                                        if cast!(&t.token_type, TokenKind::Ident) == name {
+                                        if &t.as_string() == name {
                                             return true;
                                         }
                                     }
@@ -717,78 +717,77 @@ impl Module {
                         if let Some(ty) = existing_impl {
                             Some(ty.1.last().unwrap().clone())
                         } else {
-                            let (return_type, types) = if let Some(special) = specialization {
-                                let mut sym = self.symbol_root.borrow();
-                                let current = self.get_symbol(&mut sym, &special.1);
+                            let (return_type, types) = {
+                                let sym = self.symbol_root.borrow();
 
-                                // FIXME: idk check if three of these are really needed
-                                if let Some(Symbol {
-                                    value:
-                                        SymbolValue::Funtion(Value::FunctionTemplate {
-                                            body, ty, ..
-                                        }),
-                                    ..
-                                }) = current
-                                {
-                                    let return_type = self.gen_type(&ty.return_type);
+                                let typ = if let Some(special) = specialization {
+                                    let current = self.get_symbol(&sym, &special.1);
 
-                                    let types: Vec<(String, Type)> = ty
-                                        .parameters
-                                        .iter()
-                                        .map(|f| {
-                                            (
-                                                cast!(&f.symbol.token_type, TokenKind::Ident)
-                                                    .clone(),
-                                                self.gen_type(&f.symbol_type),
-                                            )
-                                        })
-                                        .collect();
-                                    (return_type, types)
+                                    // FIXME: idk check if three of these are really needed
+                                    if let Some(Symbol {
+                                        value:
+                                            SymbolValue::Funtion(Value::FunctionTemplate {
+                                                body,
+                                                ty,
+                                                ..
+                                            }),
+                                        ..
+                                    }) = current
+                                    {
+                                        Some(ty)
+                                    } else {
+                                        None
+                                    }
                                 } else {
-                                    let return_type = self.gen_type(&ty.return_type);
+                                    None
+                                };
 
-                                    let types: Vec<(String, Type)> = ty
-                                        .parameters
-                                        .iter()
-                                        .map(|f| {
-                                            (
-                                                cast!(&f.symbol.token_type, TokenKind::Ident)
-                                                    .clone(),
-                                                self.gen_type(&f.symbol_type),
-                                            )
-                                        })
-                                        .collect();
-                                    (return_type, types)
-                                }
-                            } else {
+                                let ty = if let Some(ty) = typ { ty } else { ty };
                                 let return_type = self.gen_type(&ty.return_type);
 
-                                let types: Vec<(String, Type)> = ty
+                                let types: Option<Vec<(String, Type)>> = ty
                                     .parameters
                                     .iter()
                                     .map(|f| {
-                                        (
-                                            cast!(&f.symbol.token_type, TokenKind::Ident).clone(),
-                                            self.gen_type(&f.symbol_type),
-                                        )
+                                        if &f.symbol.as_string() == "self" {
+                                            let sym = self.symbol_root.borrow();
+                                            let current = self
+                                                .get_symbol(&sym, &self.current_symbol.borrow());
+
+                                            if let Some(Symbol {
+                                                value: SymbolValue::Template(t),
+                                                ..
+                                            }) = current
+                                            {
+                                                Some((f.symbol.as_string().clone(), t.clone().get_ptr()))
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            Some((
+                                                f.symbol.as_string().clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            ))
+                                        }
                                     })
                                     .collect();
+                                let Some(types) = types else {
+                                    //TODO: add error 
+                                    return Value::Empty
+                                };
+
                                 (return_type, types)
                             };
+
                             let path = &path[..path.len() - 1];
                             let name = self.get_next_name(path, last.clone());
 
                             let function_type = self.builder.get_fn(return_type.clone(), &types);
 
-
                             let mng = self.get_mangled_name_with_path(path, &name);
                             let function = check!(
                                 self,
-                                self.builder.add_function(
-                                    function_type,
-                                    mng,
-                                    self.module
-                                ),
+                                self.builder.add_function(function_type, mng, self.module),
                                 Value
                             );
 

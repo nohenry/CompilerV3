@@ -422,30 +422,78 @@ fn parse_function_type(
 
     let op = match first {
         Some((op, prm)) => {
-            expect(tokens, TokenKind::Colon)?;
-            let parameter_type = parse_type(tokens)?;
-            let ts = TypeSymbol {
-                symbol_type: parameter_type,
-                symbol: prm.clone(),
-            };
-            params.push(ts);
+            if Keyword::create_expect(KeywordKind::SELF) == prm.token_type {
+                params.push(TypeSymbol {
+                    symbol_type: Type::SELF,
+                    symbol: prm.clone(),
+                })
+            } else if Keyword::create_expect(KeywordKind::Const) == prm.token_type {
+                expect(tokens, Keyword::create_expect(KeywordKind::SELF))?;
+                params.push(TypeSymbol {
+                    symbol_type: Type::ConstSelf,
+                    symbol: prm.clone(),
+                })
+            } else {
+                expect(tokens, TokenKind::Colon)?;
+                let parameter_type = parse_type(tokens)?;
+                let ts = TypeSymbol {
+                    symbol_type: parameter_type,
+                    symbol: prm.clone(),
+                };
+                params.push(ts);
 
-            match tokens.current() {
-                Some(t) => match t.token_type {
-                    TokenKind::Comma => tokens.move_next(),
-                    TokenKind::CloseParen => (),
-                    _ => {
-                        return Err(ParseError::new(&format!(
-                            "Expected comma or closing parenthesis!"
-                        )))
-                    }
-                },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
-            };
+                match tokens.current() {
+                    Some(t) => match t.token_type {
+                        TokenKind::Comma => tokens.move_next(),
+                        TokenKind::CloseParen => (),
+                        _ => {
+                            return Err(ParseError::new(&format!(
+                                "Expected comma or closing parenthesis!"
+                            )))
+                        }
+                    },
+                    None => return Err(ParseError::new(&format!("Expected token!"))),
+                };
+            }
             op
         }
         None => expect(tokens, TokenKind::OpenParen)?,
     };
+
+    if let Some(
+        tok @ Token {
+            token_type:
+                TokenKind::Keyword(Keyword {
+                    keyword: KeywordKind::SELF,
+                    ..
+                }),
+            ..
+        },
+    ) = tokens.current()
+    {
+        tokens.move_next();
+        params.push(TypeSymbol {
+            symbol_type: Type::SELF,
+            symbol: (*tok).clone(),
+        })
+    } else if let Some(
+        tok @ Token {
+            token_type:
+                TokenKind::Keyword(Keyword {
+                    keyword: KeywordKind::Const,
+                    ..
+                }),
+            ..
+        },
+    ) = tokens.current()
+    {
+        tokens.move_next();
+        let otok = expect(tokens, Keyword::create_expect(KeywordKind::SELF))?;
+        params.push(TypeSymbol {
+            symbol_type: Type::ConstSelf,
+            symbol: otok.clone(),
+        })
+    }
 
     while let Some(_) = tokens.current() {
         if let Some(Token {

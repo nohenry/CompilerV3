@@ -161,7 +161,7 @@ impl Module {
                                 pram_iter.for_each(|(name, bounds)| {
                                 let found = fields.iter().position(|f| {
                                     if let dsl_lexer::ast::Type::NamedType(t) = &f.symbol_type {
-                                        if t.as_string() == name {
+                                        if &t.as_string() == name {
                                             return true;
                                         }
                                     }
@@ -362,7 +362,7 @@ impl Module {
                                 ty_params.iter().for_each(|(name, bounds)| {
                                     let found = fields.iter().position(|f| {
                                         if let dsl_lexer::ast::Type::NamedType(t) = &f.symbol_type {
-                                            if t.as_string() == name {
+                                            if &t.as_string() == name {
                                                 return true;
                                             }
                                         }
