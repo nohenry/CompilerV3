@@ -1123,6 +1123,7 @@ fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> 
                 token_type: TokenKind::Ident(_),
                 ..
             } => parse_ident(tokens),
+
             Token {
                 token_type: TokenKind::Keyword(k),
                 ..
@@ -1134,6 +1135,10 @@ fn parse_literal(tokens: &mut Cursor<&Token>) -> Result<Expression, ParseError> 
                 KeywordKind::False => {
                     tokens.move_next();
                     Ok(Expression::Literal(Literal::Boolean(false, t.range)))
+                }
+                KeywordKind::SELF => {
+                    tokens.move_next();
+                    Ok(Expression::Literal(Literal::SELF(t.range)))
                 }
                 _ => Err(ParseError::new(&format!(
                     "Keyword {:?} is not a valid literal!",

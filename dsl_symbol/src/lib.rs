@@ -1,4 +1,5 @@
-use std::{collections::HashMap, fmt::Display};
+#![feature(box_patterns)]
+use std::{collections::HashMap, ffi::CString, fmt::Display};
 
 use dsl_errors::CodeGenError;
 use dsl_lexer::ast::{FunctionSignature, ParseNode, TypeSymbol};
@@ -8,11 +9,11 @@ use llvm_sys::{
     core::{
         LLVMBuildBitCast, LLVMBuildIntCast2, LLVMBuildLoad2, LLVMBuildSExt, LLVMBuildZExt,
         LLVMConstArray, LLVMGetAlignment, LLVMGetArrayLength, LLVMGetIntTypeWidth, LLVMGetTypeKind,
-        LLVMInt8Type, LLVMPointerType, LLVMVoidType,
+        LLVMInt8Type, LLVMPointerType, LLVMPrintTypeToString, LLVMPrintValueToString, LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
-    target::{LLVMElementAtOffset, LLVMGetModuleDataLayout, LLVMPreferredAlignmentOfType},
-    LLVMBuildAlignedLoad, LLVMGetTypeSize, LLVMGetValueAt,
+    target::{LLVMGetModuleDataLayout, LLVMPreferredAlignmentOfType},
+    LLVMBuildAlignedLoad, LLVMGetTypeSize, LLVMGetValueAt, LLVMTypeKind,
 };
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,10 @@ pub enum Value {
     Function {
         llvm_value: LLVMValueRef,
         function_type: Type,
+    },
+    MemberFunction {
+        func: Box<Value>,
+        var: Box<Value>,
     },
     FunctionTemplate {
         path: Vec<String>,
@@ -85,6 +90,7 @@ impl Value {
             Self::Literal { literal_type, .. } => literal_type,
             Self::Variable { variable_type, .. } => variable_type,
             Self::Function { function_type, .. } => function_type,
+            Self::MemberFunction { func, .. } => func.get_type(),
             Self::Template { template_type, .. } => template_type,
             Self::TemplateFields { template_type, .. } => template_type,
             Self::Load { load_type, .. } => load_type,
@@ -124,6 +130,7 @@ impl Value {
                 message: "Value didn't contain any usable data!".into(),
             }),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
+            Value::MemberFunction { func, .. } => func.get_value(builder, module),
             Value::Template { llvm_value, .. } => Ok(*llvm_value),
             Value::Variable {
                 llvm_value,
@@ -154,6 +161,7 @@ impl Value {
                 message: "Value didn't contain any usable data!".into(),
             }),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
+            Value::MemberFunction { func, .. } => func.get_raw_value(),
             Value::Template { llvm_value, .. } => Ok(*llvm_value),
             Value::Variable { llvm_value, .. } => Ok(*llvm_value),
             Value::Literal { llvm_value, .. } => Ok(*llvm_value),
@@ -329,13 +337,50 @@ impl Value {
                     llvm_value,
                     literal_type: to_type.clone(),
                 });
-                // let
-
-                // LLVMElement(*llvm_value, StructTy, Offset)
             }
             _ => (),
         }
         Err(true)
+    }
+
+    pub fn get_ptr(&self) -> Value {
+        match self {
+            Value::Variable {
+                llvm_value,
+                variable_type,
+            } => Value::Literal {
+                llvm_value: *llvm_value,
+                literal_type: variable_type.get_ptr(),
+            },
+            _ => panic!(),
+        }
+    }
+
+    pub fn llvm_string(&self) -> String {
+        let cstr = unsafe { LLVMPrintValueToString(self.get_raw_value().unwrap()) };
+        let s = unsafe { CString::from_raw(cstr as *mut _) };
+        s.into_string().unwrap()
+    }
+
+    pub fn resolve_base_value(&self, builder: LLVMBuilderRef) -> Value {
+        match self {
+            Value::Variable {
+                llvm_value,
+                variable_type:
+                    Type::Reference {
+                        base_type,
+                        llvm_type,
+                    },
+            } => unsafe {
+                let llvm_value = LLVMBuildLoad2(builder, *llvm_type, *llvm_value, NULL_STR);
+                let ret = Value::Load {
+                    llvm_value,
+                    load_type: *base_type.clone(),
+                };
+                ret
+            },
+            _ => self.clone(),
+        }
     }
 }
 
@@ -345,6 +390,7 @@ impl Display for Value {
             Value::Literal { literal_type, .. } => write!(f, "{}", literal_type),
             Value::Variable { variable_type, .. } => write!(f, "{}", variable_type),
             Value::Function { function_type, .. } => write!(f, "{}", function_type),
+            Value::MemberFunction { func, .. } => write!(f, "{}", func),
             Value::Template { template_type, .. } => write!(f, "{}", template_type),
             Value::TemplateFields { template_type, .. } => write!(f, "{}", template_type),
             Value::Load { load_type, .. } => write!(f, "{}", load_type),
@@ -483,20 +529,61 @@ impl Type {
         }
     }
 
-    pub fn resolve_path<'a>(&'a self) -> Option<&'a Vec<String>> {
+    pub fn resolve_base_type(&self) -> &Type {
         match self {
-            Type::Template { path, .. } => Some(path),
+            Type::Reference { base_type, .. } => base_type.resolve_base_type(),
+            _ => self,
+        }
+    }
+
+    pub fn resolve_path(&self) -> Option<Vec<String>> {
+        match self {
+            Type::Template { path, .. } => Some(path.clone()),
+            Type::Integer {
+                signed: true,
+                llvm_type,
+            } => {
+                let w = unsafe { LLVMGetIntTypeWidth(*llvm_type) };
+                Some(vec!["core".to_string(), format!("int{}", w)])
+            }
+            Type::Integer {
+                signed: false,
+                llvm_type,
+            } => {
+                let w = unsafe { LLVMGetIntTypeWidth(*llvm_type) };
+                Some(vec!["core".to_string(), format!("uint{}", w)])
+            }
+            Type::Boolean { .. } => Some(vec!["core".to_string(), format!("bool")]),
+            Type::Float { llvm_type } => {
+                let kind = unsafe { LLVMGetTypeKind(*llvm_type) };
+                match kind {
+                    LLVMTypeKind::LLVMFloatTypeKind => {
+                        Some(vec!["core".to_string(), format!("float32")])
+                    }
+                    LLVMTypeKind::LLVMDoubleTypeKind => {
+                        Some(vec!["core".to_string(), format!("float64")])
+                    }
+                    _ => None,
+                }
+            }
+            Type::Char { .. } => Some(vec!["core".to_string(), format!("char")]),
             _ => None,
         }
     }
 
-    pub fn get_ptr(self) -> Type {
+    pub fn get_ptr(&self) -> Type {
         let ty = self.get_type();
         let llvm_type = unsafe { LLVMPointerType(ty, 0) };
         Type::Reference {
             llvm_type,
-            base_type: Box::new(self),
+            base_type: Box::new(self.clone()),
         }
+    }
+
+    pub fn llvm_string(&self) -> String {
+        let cstr = unsafe { LLVMPrintTypeToString(self.get_type()) };
+        let s = unsafe { CString::from_raw(cstr as *mut _) };
+        s.into_string().unwrap()
     }
 }
 
@@ -739,6 +826,7 @@ pub enum SymbolValue {
     Spec(Type),
     Alias(Type),
     Generic(Type, GenericType),
+    Primitive(Type),
     Module,
 }
 
@@ -766,9 +854,10 @@ impl Symbol {
         }
     }
 
-    pub fn add_child(&mut self, name: &String, value: SymbolValue) {
+    pub fn add_child<T: ToString>(&mut self, name: &T, value: SymbolValue) -> &mut Symbol {
         self.children
-            .insert(name.clone(), Symbol::new(name.clone(), value));
+            .insert(name.to_string(), Symbol::new(name.to_string(), value));
+        self.children.get_mut(&name.to_string()).unwrap()
     }
 }
 
@@ -784,6 +873,7 @@ impl Display for Symbol {
             SymbolValue::Module => write!(f, "Module `{}`", self.name),
             SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
             SymbolValue::Template(_) => write!(f, "Template `{}`", self.name),
+            SymbolValue::Primitive(_) => write!(f, "Primititve `{}`", self.name),
             SymbolValue::Generic(_, _) => write!(f, "Generic `{}`", self.name),
         }
     }

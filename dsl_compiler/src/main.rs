@@ -8,9 +8,10 @@ use std::{
     fs,
     os::raw::c_char,
     path::Path,
-    rc::Rc,
+    rc::Rc, fmt::format,
 };
 
+use dsl_llvm::IRBuilder;
 use dsl_symbol::{Symbol, SymbolValue};
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
@@ -136,7 +137,19 @@ fn main() {
         create_target_machine()
     };
 
-    let symbols = Symbol::root();
+    let mut symbols = Symbol::root();
+
+    let core = symbols.add_child(&"core", SymbolValue::Module);
+    for i in [8, 16, 32, 64] {
+        core.add_child(&format!("int{}", i), SymbolValue::Primitive(IRBuilder::get_int(i)));
+        core.add_child(&format!("uint{}", i), SymbolValue::Primitive(IRBuilder::get_uint(i)));
+    }
+    core.add_child(&format!("bool"), SymbolValue::Primitive(IRBuilder::get_bool()));
+
+    core.add_child(&format!("char"), SymbolValue::Primitive(IRBuilder::get_uint_8()));
+
+    core.add_child(&format!("float32"), SymbolValue::Primitive(IRBuilder::get_float32()));
+    core.add_child(&format!("float64"), SymbolValue::Primitive(IRBuilder::get_float64()));
 
     let path = Path::new("test/test.dsl");
 

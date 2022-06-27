@@ -364,11 +364,7 @@ impl TreeDisplay for FunctionSignature {
                              symbol_type,
                              symbol,
                          }| {
-                            let grp = Grouper(format!(
-                                "{}: {}",
-                                symbol.as_string(),
-                                symbol_type
-                            ));
+                            let grp = Grouper(format!("{}: {}", symbol.as_string(), symbol_type));
                             let b: Box<dyn TreeDisplay> = Box::new(grp);
                             b
                         },
@@ -495,8 +491,6 @@ impl Type {
             Type::GenericType(t) => t.range,
         }
     }
-
-    
 }
 
 impl Display for Type {
@@ -730,11 +724,7 @@ impl TreeDisplay for TemplateDecleration {
                              symbol_type,
                              symbol,
                          }| {
-                            let grp = Grouper(format!(
-                                "{}: {}",
-                                symbol.as_string(),
-                                symbol_type
-                            ));
+                            let grp = Grouper(format!("{}: {}", symbol.as_string(), symbol_type));
                             let b: Box<dyn TreeDisplay> = Box::new(grp);
                             b
                         },
@@ -936,14 +926,9 @@ impl TreeDisplay for GenericParameters {
                     .collect(),
             ))
         } else if let Some(spec) = &specialization {
-            Box::new(CreateParent(
-                child_name.as_string().clone(),
-                vec![spec],
-            ))
+            Box::new(CreateParent(child_name.as_string().clone(), vec![spec]))
         } else {
-            Box::new(Grouper(
-                child_name.as_string().clone(),
-            ))
+            Box::new(Grouper(child_name.as_string().clone()))
         }
     }
 }
@@ -1194,6 +1179,7 @@ pub enum Literal {
     Array(ArrayInitializer),
     StructInitializer(TemplateInitializer),
     String(String, Range),
+    SELF(Range),
 }
 
 impl Literal {
@@ -1205,6 +1191,7 @@ impl Literal {
             Literal::Array(r) => r.range.clone(),
             Literal::StructInitializer(r) => r.range.clone(),
             Literal::String(_, r) => r.clone(),
+            Literal::SELF(r) => r.clone(),
             Literal::Empty => default_range(),
         }
     }
@@ -1227,6 +1214,11 @@ impl Display for Literal {
                 f,
                 "Boolean {}",
                 ColoredString::from(format!("{}", b).as_str()).yellow()
+            ),
+            Literal::SELF(_) => write!(
+                f,
+                "{}",
+                ColoredString::from(format!("self").as_str()).yellow()
             ),
             Literal::Array(b) => write!(f, "{}", b),
             Literal::StructInitializer(b) => write!(f, "{}", b),

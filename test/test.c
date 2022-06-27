@@ -1,19 +1,16 @@
 
-struct Data1 {
-    int u;
-    int v;
-};
-
 
 struct Data {
     int x;
-    struct Data1 d;
 };
 
+void act(struct Data *d) {
+    d->x = 8;
+}
 
 int main(int argc)
 {
-    struct Data data = {.x = argc, .d = {.u = 2, .v = 8}};
-    asm ("nop");
-    int d = data.d.u;
+    struct Data data = {.x = argc};
+
+    act(&data);
 }

@@ -1,6 +1,7 @@
 #![feature(extern_types)]
 #![feature(crate_visibility_modifier)]
 #![feature(iter_intersperse)]
+#![feature(box_patterns)]
 
 // pub use llvm_sys::prelude::*;
 // pub use llvm_sys::*;

@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 
 use dsl_errors::{check, CodeGenError};
+use dsl_llvm::IRBuilder;
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::LLVMGetParam;
 
+use crate::module::CodeGenPass;
 use dsl_lexer::ast::{
     ActionDecleration, FunctionDecleration, FunctionSignature, GenericParameters, ParseNode,
     TemplateDecleration, TypeSymbol, VariableDecleration,
 };
-use dsl_lexer::TokenKind;
-use dsl_util::{cast, TreeDisplay};
-
-use crate::module::CodeGenPass;
 
 use super::module::Module;
 use dsl_symbol::{GenericType, Symbol, SymbolValue, Type, Value};
@@ -30,7 +28,7 @@ impl Module {
             }) => {
                 let name = token.as_string();
 
-                if let (Some(generic), CodeGenPass::Symbols) =
+                if let (Some(generic), CodeGenPass::TemplateSymbols) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
                     let mut path = self.current_symbol.borrow().clone();
@@ -56,7 +54,7 @@ impl Module {
                     check!(self, self.add_generic_children(generic), Value);
 
                     self.pop_symbol();
-                } else if let (Some(generic), CodeGenPass::SymbolsSpecialization) =
+                } else if let (Some(generic), CodeGenPass::TemplateSpecialization) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
                     let mut path = self.current_symbol.borrow().clone();
@@ -108,7 +106,7 @@ impl Module {
                     check!(self, self.add_special_generic_children(generic), Value);
 
                     self.pop_symbol();
-                } else if let (Some(generic), CodeGenPass::Values) =
+                } else if let (Some(generic), CodeGenPass::TemplateValues) =
                     (generic, &*self.code_gen_pass.borrow())
                 {
                     let mut path = self.current_symbol.borrow().clone();
@@ -188,7 +186,7 @@ impl Module {
                     self.current_symbol.replace(old_sym);
                 } else {
                     match &*self.code_gen_pass.borrow() {
-                        CodeGenPass::Symbols => {
+                        CodeGenPass::TemplateSymbols => {
                             let mng = self.get_mangled_name(&name);
                             let mut pth = self.current_symbol.borrow().clone();
                             pth.push(name.clone());
@@ -198,7 +196,7 @@ impl Module {
 
                             self.pop_symbol();
                         }
-                        CodeGenPass::Values => {
+                        CodeGenPass::TemplateValues => {
                             let types: Vec<_> = fields
                                 .iter()
                                 .map(|f| self.gen_type(&f.symbol_type))
@@ -245,26 +243,10 @@ impl Module {
                 ..
             }) => {
                 let temp = self.gen_type(template_type);
-                let path = match temp {
-                    Type::TemplateTemplate { .. } => {
-                        // if let CodeGenPass::Symbols = self.code_gen_pass.borrow() {
-
-                        // }
-                        return Value::Empty;
-                        self.add_error(format!(
-                            "Template type `{}` requires a generic argument",
-                            temp
-                        ));
-                    }
-                    Type::Template { path, .. } => path,
-                    _ => return Value::Empty,
+                let Some(path)= temp.resolve_path() else {
+                    // TODO: errors
+                    return Value::Empty;
                 };
-
-                // let mut root_sym = self.symbol_root.borrow();
-                // let Some(sym) = self.get_symbol(&mut root_sym, &path) else {
-                //     // TODO: errors
-                //     return Value::Empty;
-                // };
 
                 let old_current_sym = self.current_symbol.take();
 
@@ -287,7 +269,7 @@ impl Module {
                 let place_var = if let Some((init, ..)) = possible_initializer {
                     let mut alloc = check!(
                         self,
-                        self.builder.create_alloc(&self.builder.get_bool()),
+                        self.builder.create_alloc(&IRBuilder::get_bool()),
                         Value
                     );
 
@@ -470,7 +452,7 @@ impl Module {
                                         self.get_symbol(&sym, &self.current_symbol.borrow());
 
                                     if let Some(Symbol {
-                                        value: SymbolValue::Template(t),
+                                        value: SymbolValue::Template(t) | SymbolValue::Primitive(t),
                                         ..
                                     }) = current
                                     {
@@ -492,7 +474,7 @@ impl Module {
                             return Value::Empty
                         };
 
-                        let function_type = self.builder.get_fn(return_type.clone(), &types);
+                        let function_type = IRBuilder::get_fn(return_type.clone(), &types);
 
                         let function = check!(
                             self,

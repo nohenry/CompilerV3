@@ -10,6 +10,9 @@ use dsl_errors::CodeGenError;
 use dsl_symbol::{Symbol, SymbolValue, Value};
 
 pub enum CodeGenPass {
+    TemplateSymbols,
+    TemplateSpecialization,
+    TemplateValues,
     Symbols,
     SymbolsSpecialization,
     Values,
@@ -64,11 +67,11 @@ impl Module {
             SymbolValue::Funtion(
                 p.builder
                     .add_function(
-                        p.builder.get_fn(
-                            p.builder.get_unit(),
+                        IRBuilder::get_fn(
+                            IRBuilder::get_unit(),
                             &vec![(
                                 "str".to_string(),
-                                p.builder.get_ptr(&p.builder.get_uint_8()),
+                                IRBuilder::get_ptr(&IRBuilder::get_uint_8()),
                             )],
                         ),
                         "printf".to_string(),
@@ -85,12 +88,13 @@ impl Module {
     }
 
     pub fn gen(&self) {
-        self.gen_parse_node(&self.ast);
-        self.code_gen_pass
-            .replace(CodeGenPass::SymbolsSpecialization);
-        self.gen_parse_node(&self.ast);
-        self.code_gen_pass.replace(CodeGenPass::Values);
-        self.gen_parse_node(&self.ast);
+        self.gen_pass(CodeGenPass::TemplateSymbols);
+        self.gen_pass(CodeGenPass::TemplateSpecialization);
+        self.gen_pass(CodeGenPass::TemplateValues);
+
+        self.gen_pass(CodeGenPass::Symbols);
+        self.gen_pass(CodeGenPass::SymbolsSpecialization);
+        self.gen_pass(CodeGenPass::Values);
 
         for err in self.errors.borrow().iter() {
             println!(
@@ -99,6 +103,11 @@ impl Module {
                 err.message
             );
         }
+    }
+
+    pub fn gen_pass(&self, pass: CodeGenPass) {
+        self.code_gen_pass.replace(pass);
+        self.gen_parse_node(&self.ast);
     }
 
     pub fn get_symbol<'a>(&self, sym: &'a Symbol, chain: &[String]) -> Option<&'a Symbol> {

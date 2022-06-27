@@ -1,5 +1,4 @@
 use dsl_symbol::{Symbol, SymbolValue};
-use dsl_util::cast;
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::{
     LLVMArrayType, LLVMDoubleType, LLVMFloatType, LLVMFunctionType, LLVMInt1Type, LLVMInt32Type,
@@ -11,7 +10,6 @@ use dsl_lexer::{
         ArrayInitializer, ArrayType, Expression, FunctionType, GenericType, Literal, ReferenceType,
         Type,
     },
-    TokenKind,
 };
 
 use super::module::Module;

@@ -1,4 +1,5 @@
 use dsl_errors::{check, CodeGenError};
+use dsl_llvm::IRBuilder;
 use llvm_sys::core::{
     LLVMBuildSelect, LLVMGetParam, LLVMInstructionRemoveFromParent, LLVMIsConstant,
     LLVMPrintModuleToString,
@@ -7,7 +8,7 @@ use llvm_sys::target::LLVMGetModuleDataLayout;
 use llvm_sys::{LLVMIntPredicate, LLVMNumberOfChildrenInBlock, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
-    BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Loop,
+    BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Literal, Loop,
     LoopExpression, UnaryExpression,
 };
 use dsl_lexer::{OperatorKind, TokenKind};
@@ -85,6 +86,14 @@ impl Module {
                                                     arr.push(r.as_string().clone());
                                                 }
                                                 (
+                                                    Expression::Literal(Literal::SELF(_)),
+                                                    Expression::Identifier(r),
+                                                    OperatorKind::Dot,
+                                                ) => {
+                                                    arr.push("self".to_string());
+                                                    arr.push(r.as_string().clone());
+                                                }
+                                                (
                                                     Expression::BinaryExpression(l),
                                                     Expression::Identifier(r),
                                                     OperatorKind::Dot,
@@ -97,9 +106,8 @@ impl Module {
                                         }
 
                                         let mut chain = Vec::new();
-                                        if let Some(current) = current {
-                                            trav(&mut chain, bin);
-                                        }
+
+                                        trav(&mut chain, bin);
 
                                         let mut citer = chain.iter();
 
@@ -120,21 +128,20 @@ impl Module {
 
                                         match &sym.value {
                                             SymbolValue::Variable(
-                                                var @ Value::Variable {
-                                                    variable_type:
-                                                        ty @ Type::Template { path, fields, .. },
-                                                    ..
-                                                },
+                                                var @ Value::Variable { variable_type, .. },
                                             ) => {
-                                                let Some(sym) = self.get_symbol(&root_sym, path) else {
+                                                if let Type::Template { path, fields, .. } =
+                                                    variable_type.resolve_base_type()
+                                                {
+                                                    let Some(sym) = self.get_symbol(&root_sym, path) else {
                                                     return Value::Empty
                                                 };
-                                                let mut var = var.clone();
-                                                let mut sym = sym;
-                                                let mut fields = fields;
-                                                for m in citer {
-                                                    if let Some(child) = sym.children.get(m) {
-                                                        match &child.value {
+                                                    let mut var = var.clone();
+                                                    let mut sym = sym;
+                                                    let mut fields = fields;
+                                                    for m in citer {
+                                                        if let Some(child) = sym.children.get(m) {
+                                                            match &child.value {
                                                             SymbolValue::Field(ty) => {
                                                                 let pos = fields
                                                                     .keys()
@@ -174,14 +181,18 @@ impl Module {
                                                                 }),
                                                             ) => {
                                                                 // sym = func;
-                                                                return func.clone();
+                                                                return Value::MemberFunction {
+                                                                    func: Box::new(func.clone()),
+                                                                    var: Box::new(var),
+                                                                };
                                                             }
 
                                                             _ => (),
                                                         }
+                                                        }
                                                     }
+                                                    return var;
                                                 }
-                                                return var;
                                             }
                                             _ => (),
                                         }
@@ -310,7 +321,7 @@ impl Module {
                             variable_type,
                         } => Value::Literal {
                             llvm_value,
-                            literal_type: self.builder.get_ptr(&variable_type),
+                            literal_type: IRBuilder::get_ptr(&variable_type),
                         },
                         _ => Value::Empty,
                     }
@@ -362,7 +373,7 @@ impl Module {
                     }
                 };
 
-                let index0 = self.builder.create_literal(&self.builder.get_uint_64(), 0);
+                let index0 = IRBuilder::create_literal(&IRBuilder::get_uint_64(), 0u64);
                 let indicies = [index0, right];
 
                 check!(
@@ -759,7 +770,10 @@ impl Module {
                                                 ..
                                             }) = current
                                             {
-                                                Some((f.symbol.as_string().clone(), t.clone().get_ptr()))
+                                                Some((
+                                                    f.symbol.as_string().clone(),
+                                                    t.clone().get_ptr(),
+                                                ))
                                             } else {
                                                 None
                                             }
@@ -782,7 +796,7 @@ impl Module {
                             let path = &path[..path.len() - 1];
                             let name = self.get_next_name(path, last.clone());
 
-                            let function_type = self.builder.get_fn(return_type.clone(), &types);
+                            let function_type = IRBuilder::get_fn(return_type.clone(), &types);
 
                             let mng = self.get_mangled_name_with_path(path, &name);
                             let function = check!(

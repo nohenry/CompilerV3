@@ -11,8 +11,9 @@ use llvm_sys::{
         LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
         LLVMBuildMemCpy, LLVMBuildNeg, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
         LLVMBuildSelect, LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
-        LLVMCreateBasicBlockInContext, LLVMFunctionType, LLVMGetGlobalContext, LLVMInt1Type,
-        LLVMInt64Type, LLVMInt8Type, LLVMIsConstant, LLVMPointerType, LLVMPositionBuilder,
+        LLVMCreateBasicBlockInContext, LLVMDoubleType, LLVMFloatType, LLVMFunctionType,
+        LLVMGetGlobalContext, LLVMInt16Type, LLVMInt1Type, LLVMInt32Type, LLVMInt64Type,
+        LLVMInt8Type, LLVMIntType, LLVMIsConstant, LLVMPointerType, LLVMPositionBuilder,
         LLVMPositionBuilderAtEnd, LLVMStructCreateNamed, LLVMStructSetBody, LLVMVoidType,
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
@@ -55,47 +56,108 @@ impl IRBuilder {
         }
     }
 
-    pub fn get_int_64(&self) -> Type {
+    pub fn get_uint(width: u32) -> Type {
         Type::Integer {
-            llvm_type: unsafe { LLVMInt64Type() },
-            signed: true,
-        }
-    }
-
-    pub fn get_uint_64(&self) -> Type {
-        Type::Integer {
-            llvm_type: unsafe { LLVMInt64Type() },
+            llvm_type: unsafe { LLVMIntType(width) },
             signed: false,
         }
     }
 
-    pub fn get_uint_8(&self) -> Type {
+    pub fn get_uint_8() -> Type {
         Type::Integer {
             llvm_type: unsafe { LLVMInt8Type() },
             signed: false,
         }
     }
 
-    pub fn get_bool(&self) -> Type {
+    pub fn get_uint_16() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt16Type() },
+            signed: false,
+        }
+    }
+
+    pub fn get_uint_32() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt32Type() },
+            signed: false,
+        }
+    }
+
+    pub fn get_uint_64() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt64Type() },
+            signed: false,
+        }
+    }
+
+    pub fn get_int_8() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt8Type() },
+            signed: true,
+        }
+    }
+
+    pub fn get_int_16() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt16Type() },
+            signed: true,
+        }
+    }
+
+    pub fn get_int_32() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt32Type() },
+            signed: true,
+        }
+    }
+
+    pub fn get_int_64() -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMInt64Type() },
+            signed: true,
+        }
+    }
+
+    pub fn get_int(width: u32) -> Type {
+        Type::Integer {
+            llvm_type: unsafe { LLVMIntType(width) },
+            signed: false,
+        }
+    }
+
+    pub fn get_float32() -> Type {
+        Type::Float {
+            llvm_type: unsafe { LLVMFloatType() },
+        }
+    }
+
+    pub fn get_float64() -> Type {
+        Type::Float {
+            llvm_type: unsafe { LLVMDoubleType() },
+        }
+    }
+
+    pub fn get_bool() -> Type {
         Type::Boolean {
             llvm_type: unsafe { LLVMInt1Type() },
         }
     }
 
-    pub fn get_unit(&self) -> Type {
+    pub fn get_unit() -> Type {
         Type::Unit {
             llvm_type: unsafe { LLVMVoidType() },
         }
     }
 
-    pub fn get_ptr(&self, base_type: &Type) -> Type {
+    pub fn get_ptr(base_type: &Type) -> Type {
         Type::Reference {
             llvm_type: unsafe { LLVMPointerType(base_type.get_type(), 0) },
             base_type: Box::new(base_type.clone()),
         }
     }
 
-    pub fn get_fn(&self, return_type: Type, params: &Vec<(String, Type)>) -> Type {
+    pub fn get_fn(return_type: Type, params: &Vec<(String, Type)>) -> Type {
         let mut llvm_types: Vec<LLVMTypeRef> = params.iter().map(|f| f.1.get_type()).collect();
 
         let mut parameters = LinkedHashMap::new();
@@ -118,7 +180,7 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_literal<T>(&self, ty: &Type, value: T) -> Value
+    pub fn create_literal<T>(ty: &Type, value: T) -> Value
     where
         T: ApproxInto<u64> + ApproxInto<f64>,
     {
@@ -203,7 +265,8 @@ impl IRBuilder {
                     Ok(Value::Instruction { llvm_value })
                 }
                 template @ Value::Template { .. } => {
-                    let vcal = self.create_bitcast(&template, &self.get_ptr(&self.get_uint_8()))?;
+                    let vcal = self
+                        .create_bitcast(&template, &IRBuilder::get_ptr(&IRBuilder::get_uint_8()))?;
                     self.create_memcpy(ptr, &vcal, module)
                 }
                 Value::TemplateFields {
@@ -523,25 +586,37 @@ impl IRBuilder {
         base_type: Type,
         index: u32,
     ) -> Result<Value, CodeGenError> {
+        let ptr = ptr.resolve_base_value(self.builder);
+        println!("{}", ptr.llvm_string());
+        println!("{}", ptr.get_type().llvm_string());
         match ptr {
+            Value::Load {
+                llvm_value,
+                load_type,
+            } => {
+                let value = unsafe {
+                    LLVMBuildStructGEP2(
+                        self.builder,
+                        load_type.resolve_base_type().get_type(),
+                        llvm_value,
+                        index,
+                        NULL_STR,
+                    )
+                };
+                Ok(Value::Variable {
+                    llvm_value: value,
+                    variable_type: base_type,
+                })
+            }
             Value::Variable {
                 llvm_value,
                 variable_type,
             } => {
-                // let mut ind: Vec<_> = indicies
-                //     .iter()
-                //     .filter_map(|i| match i {
-                //         Value::Variable { llvm_value, .. } => Some(*llvm_value),
-                //         Value::Literal { llvm_value, .. } => Some(*llvm_value),
-                //         _ => None,
-                //     })
-                //     .collect();
-
                 let value = unsafe {
                     LLVMBuildStructGEP2(
                         self.builder,
                         variable_type.get_type(),
-                        *llvm_value,
+                        llvm_value,
                         index,
                         NULL_STR,
                     )
@@ -600,8 +675,102 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_fn_call(&self, value: &Value, args: Vec<Value>) -> Result<Value, CodeGenError> {
+    pub fn create_fn_call(
+        &self,
+        value: &Value,
+        mut args: Vec<Value>,
+    ) -> Result<Value, CodeGenError> {
+        fn gen(
+            args: &Vec<Value>,
+            parameters: &LinkedHashMap<String, Type>,
+            return_type: &Type,
+            llvm_type: LLVMTypeRef,
+            llvm_value: LLVMValueRef,
+            builder: LLVMBuilderRef,
+            module: LLVMModuleRef,
+        ) -> Result<Value, CodeGenError> {
+            if args.len() < parameters.len() {
+                let aa: String = parameters
+                    .keys()
+                    .rev()
+                    .take(parameters.len() - args.len())
+                    .cloned()
+                    .intersperse(", ".to_string())
+                    .collect();
+
+                return Err(CodeGenError {
+                    message: format!("Expected arguments `{}` in call!", aa),
+                });
+            } else if args.len() > parameters.len() {
+                return Err(CodeGenError {
+                    message: format!("Extra arguments in function call!",),
+                });
+            }
+
+            let res: Result<Vec<Value>, _> = parameters
+                .iter()
+                .zip(args)
+                .map(|((name, ty), val)| {
+                    let nty = val.weak_cast(ty, builder);
+                    match nty {
+                        Err(true) => {
+                            return Err(CodeGenError {
+                                message: format!(
+                                    "Function argument doesn't match type of parameter `{}`",
+                                    name
+                                ),
+                            })
+                        }
+                        Err(false) => Ok(val.clone()),
+                        Ok(v) => Ok(v),
+                    }
+                })
+                .collect();
+            let args = res?;
+
+            let fargs: Result<Vec<LLVMValueRef>, CodeGenError> =
+                args.iter().map(|f| f.get_value(builder, module)).collect();
+            let mut fargs = fargs?;
+
+            Ok(Value::Literal {
+                llvm_value: unsafe {
+                    LLVMBuildCall2(
+                        builder,
+                        llvm_type,
+                        llvm_value,
+                        fargs.as_mut_ptr(),
+                        fargs.len().try_into().unwrap(),
+                        NULL_STR,
+                    )
+                },
+                literal_type: return_type.clone(),
+            })
+        }
         match value {
+            Value::MemberFunction {
+                func:
+                    box Value::Function {
+                        llvm_value,
+                        function_type:
+                            Type::Function {
+                                return_type,
+                                llvm_type,
+                                parameters,
+                            },
+                    },
+                var,
+            } => {
+                args.push(var.get_ptr());
+                gen(
+                    &args,
+                    parameters,
+                    return_type,
+                    *llvm_type,
+                    *llvm_value,
+                    self.builder,
+                    self.module,
+                )
+            }
             Value::Function {
                 llvm_value,
                 function_type:
@@ -619,64 +788,15 @@ impl IRBuilder {
                         llvm_type,
                         parameters,
                     },
-            } => unsafe {
-                if args.len() < parameters.len() {
-                    let aa: String = parameters
-                        .keys()
-                        .rev()
-                        .take(parameters.len() - args.len())
-                        .cloned()
-                        .intersperse(", ".to_string())
-                        .collect();
-
-                    return Err(CodeGenError {
-                        message: format!("Expected arguments `{}` in call!", aa),
-                    });
-                } else if args.len() > parameters.len() {
-                    return Err(CodeGenError {
-                        message: format!("Extra arguments in function call!",),
-                    });
-                }
-
-                let res: Result<Vec<Value>, _> = parameters
-                    .iter()
-                    .zip(args)
-                    .map(|((name, ty), val)| {
-                        let nty = val.weak_cast(ty, self.builder);
-                        match nty {
-                            Err(true) => {
-                                return Err(CodeGenError {
-                                    message: format!(
-                                        "Function argument doesn't match type of parameter `{}`",
-                                        name
-                                    ),
-                                })
-                            }
-                            Err(false) => Ok(val),
-                            Ok(v) => Ok(v),
-                        }
-                    })
-                    .collect();
-                let args = res?;
-
-                let fargs: Result<Vec<LLVMValueRef>, CodeGenError> = args
-                    .iter()
-                    .map(|f| f.get_value(self.builder, self.module))
-                    .collect();
-                let mut fargs = fargs?;
-
-                Ok(Value::Literal {
-                    llvm_value: LLVMBuildCall2(
-                        self.builder,
-                        *llvm_type,
-                        *llvm_value,
-                        fargs.as_mut_ptr(),
-                        fargs.len().try_into().unwrap(),
-                        NULL_STR,
-                    ),
-                    literal_type: *(*return_type).clone(),
-                })
-            },
+            } => gen(
+                &args,
+                parameters,
+                return_type,
+                *llvm_type,
+                *llvm_value,
+                self.builder,
+                self.module,
+            ),
             _ => Err(CodeGenError {
                 message: format!("Attempted to call non function value!"),
             }),
@@ -995,7 +1115,7 @@ impl IRBuilder {
                 message: "Sizes in memcpy are not equal!".into(),
             });
         }
-        let size = self.create_literal(&self.get_uint_64(), dsize);
+        let size = IRBuilder::create_literal(&IRBuilder::get_uint_64(), dsize);
         let llvm_value = unsafe {
             LLVMBuildMemCpy(
                 self.builder,
