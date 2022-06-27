@@ -150,10 +150,11 @@ impl IRBuilder {
         }
     }
 
-    pub fn get_ptr(base_type: &Type) -> Type {
+    pub fn get_ptr(base_type: &Type, constant: bool) -> Type {
         Type::Reference {
             llvm_type: unsafe { LLVMPointerType(base_type.get_type(), 0) },
             base_type: Box::new(base_type.clone()),
+            constant,
         }
     }
 
@@ -203,11 +204,12 @@ impl IRBuilder {
         }
     }
 
-    pub fn create_alloc(&self, ty: &Type) -> Result<Value, CodeGenError> {
+    pub fn create_alloc(&self, ty: &Type, constant: bool) -> Result<Value, CodeGenError> {
         let value = unsafe { LLVMBuildAlloca(self.builder, ty.get_type(), NULL_STR) };
         Ok(Value::Variable {
             llvm_value: value,
             variable_type: ty.clone(),
+            constant,
         })
     }
 
@@ -242,7 +244,7 @@ impl IRBuilder {
             Value::Variable {
                 llvm_value: ptr_value,
                 variable_type,
-                ..
+                constant,
             } => match value {
                 Value::Literal {
                     llvm_value: rvalue, ..
@@ -253,6 +255,7 @@ impl IRBuilder {
                 var @ Value::Variable {
                     llvm_value,
                     variable_type,
+                    constant,
                 } => {
                     let load = self.create_aligned_load(var)?.get_raw_value()?;
 
@@ -265,8 +268,10 @@ impl IRBuilder {
                     Ok(Value::Instruction { llvm_value })
                 }
                 template @ Value::Template { .. } => {
-                    let vcal = self
-                        .create_bitcast(&template, &IRBuilder::get_ptr(&IRBuilder::get_uint_8()))?;
+                    let vcal = self.create_bitcast(
+                        &template,
+                        &IRBuilder::get_ptr(&IRBuilder::get_uint_8(), *constant),
+                    )?;
                     self.create_memcpy(ptr, &vcal, module)
                 }
                 Value::TemplateFields {
@@ -308,6 +313,7 @@ impl IRBuilder {
             Value::Variable {
                 llvm_value: ptr_value,
                 variable_type,
+                constant,
             } => {
                 let align = self.get_data_layout().get_preferred_align(variable_type);
                 let value = unsafe {
@@ -339,6 +345,7 @@ impl IRBuilder {
             var @ Value::Variable {
                 llvm_value,
                 variable_type,
+                constant,
             } => {
                 let value = self.create_aligned_load(var)?.get_raw_value()?;
                 let value = unsafe { LLVMBuildNeg(self.builder, value, NULL_STR) };
@@ -367,6 +374,7 @@ impl IRBuilder {
         Ok(Value::Load {
             llvm_value: value,
             load_type: val.get_type().clone(),
+            constant: val.is_const()
         })
     }
 
@@ -381,6 +389,7 @@ impl IRBuilder {
                 var @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
+                    constant,
                 },
                 Value::Literal {
                     llvm_value: rvalue, ..
@@ -398,10 +407,12 @@ impl IRBuilder {
                 lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
+                    ..
                 },
                 rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
+                    ..
                 },
             ) => {
                 let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
@@ -448,6 +459,7 @@ impl IRBuilder {
                 var @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
+                    ..
                 },
                 Value::Literal {
                     llvm_value: rvalue, ..
@@ -465,10 +477,12 @@ impl IRBuilder {
                 lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
+                    ..
                 },
                 rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
+                    ..
                 },
             ) => {
                 let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
@@ -499,6 +513,7 @@ impl IRBuilder {
                 lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type,
+                    ..
                 },
                 Value::Literal {
                     llvm_value: rvalue, ..
@@ -516,10 +531,12 @@ impl IRBuilder {
                 lvar @ Value::Variable {
                     llvm_value: lvalue,
                     variable_type: ltype,
+                    ..
                 },
                 rvar @ Value::Variable {
                     llvm_value: rvalue,
                     variable_type: rtype,
+                    ..
                 },
             ) => {
                 let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
@@ -549,6 +566,7 @@ impl IRBuilder {
             Value::Variable {
                 llvm_value,
                 variable_type,
+                constant,
             } => {
                 let mut ind: Vec<_> = indicies
                     .iter()
@@ -572,6 +590,7 @@ impl IRBuilder {
                 Ok(Value::Variable {
                     llvm_value: value,
                     variable_type: base_type,
+                    constant: *constant,
                 })
             }
             _ => Err(CodeGenError {
@@ -593,6 +612,7 @@ impl IRBuilder {
             Value::Load {
                 llvm_value,
                 load_type,
+                constant
             } => {
                 let value = unsafe {
                     LLVMBuildStructGEP2(
@@ -606,11 +626,13 @@ impl IRBuilder {
                 Ok(Value::Variable {
                     llvm_value: value,
                     variable_type: base_type,
+                    constant
                 })
             }
             Value::Variable {
                 llvm_value,
                 variable_type,
+                constant
             } => {
                 let value = unsafe {
                     LLVMBuildStructGEP2(
@@ -624,6 +646,7 @@ impl IRBuilder {
                 Ok(Value::Variable {
                     llvm_value: value,
                     variable_type: base_type,
+                    constant
                 })
             }
             _ => Err(CodeGenError {
@@ -788,6 +811,7 @@ impl IRBuilder {
                         llvm_type,
                         parameters,
                     },
+                    ..
             } => gen(
                 &args,
                 parameters,
@@ -848,6 +872,7 @@ impl IRBuilder {
                     var @ Value::Variable {
                         llvm_value,
                         variable_type,
+                        ..
                     } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
                     Value::Instruction { llvm_value } => *llvm_value,
@@ -863,6 +888,7 @@ impl IRBuilder {
                     var @ Value::Variable {
                         llvm_value,
                         variable_type,
+                        ..
                     } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
                     Value::Instruction { llvm_value } => *llvm_value,
@@ -989,6 +1015,7 @@ impl IRBuilder {
             var @ Value::Variable {
                 llvm_value,
                 variable_type,
+                ..
             } => {
                 let ld = self.create_aligned_load(var)?.get_raw_value()?;
                 let ret = unsafe { LLVMBuildRet(self.builder, ld) };
@@ -1142,6 +1169,7 @@ impl IRBuilder {
             Value::Variable {
                 llvm_value,
                 variable_type,
+                ..
             } => {
                 unsafe {
                     LLVMSetAllocatedType(*llvm_value, module, ty.get_type());

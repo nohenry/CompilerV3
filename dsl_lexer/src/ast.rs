@@ -216,6 +216,7 @@ impl TreeDisplay for LoopExpression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
+    Empty,
     Identifier(Token),
     Literal(Literal),
     BinaryExpression(BinaryExpression),
@@ -245,6 +246,7 @@ impl Expression {
             Expression::LoopExpression(t) => (t.range),
             Expression::Block(_, f) => f.clone(),
             Expression::Generic(_, _, r) => r.clone(),
+            Expression::Empty => panic!(),
         }
     }
 }
@@ -252,6 +254,7 @@ impl Expression {
 impl Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Expression::Empty => write!(f, "Empty"),
             Expression::Identifier(i) => write!(f, "{}", i.as_string()),
             Expression::Literal(i) => write!(f, "{}", i),
             Expression::BinaryExpression(b) => write!(f, "{}", b),
@@ -271,6 +274,7 @@ impl Display for Expression {
 impl TreeDisplay for Expression {
     fn num_children(&self) -> usize {
         match self {
+            Expression::Empty => 0,
             Expression::Identifier(_) => 0,
             Expression::Literal(l) => l.num_children(),
             Expression::BinaryExpression(l) => l.num_children(),
@@ -458,6 +462,7 @@ impl GenericType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Empty,
     Unit,
     SELF,
     ConstSelf,
@@ -476,6 +481,7 @@ pub enum Type {
 impl Type {
     pub fn get_range(&self) -> Range {
         match self {
+            Type::Empty => panic!(),
             Type::Unit => default_range(),
             Type::SELF => default_range(),
             Type::ConstSelf => default_range(),
@@ -496,6 +502,7 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Empty => write!(f, "Empty"),
             Self::Unit => f.write_str("()"),
             Self::SELF => f.write_str("Self"),
             Self::ConstSelf => f.write_str("const Self"),
@@ -590,6 +597,7 @@ pub struct VariableDecleration {
         /* Initializer */ Box<Expression>,
         /* Position of assignment operator*/ Range,
     )>,
+    pub is_const: bool,
     pub range: Range,
 }
 
@@ -958,7 +966,7 @@ impl TreeDisplay for ImportDecleration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseNode {
-    None,
+    Empty,
     Expression(Expression, Range),
     Type(Type, Range),
     VariableDecleration(VariableDecleration),
@@ -995,7 +1003,7 @@ impl ParseNode {
             ParseNode::Import(i) => i.range,
             ParseNode::Punctuation(_, p) => p.clone(),
 
-            ParseNode::None => default_range(),
+            ParseNode::Empty => default_range(),
         }
     }
 }
@@ -1020,7 +1028,7 @@ impl Display for ParseNode {
             }
             ParseNode::Import(i) => write!(f, "{}", i),
             ParseNode::Punctuation(i, _) => write!(f, "{}", i),
-            ParseNode::None => write!(f, "{}", ColoredString::from("None").red()),
+            ParseNode::Empty => write!(f, "{}", ColoredString::from("None").red()),
         }
     }
 }

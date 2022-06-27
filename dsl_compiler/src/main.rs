@@ -5,10 +5,11 @@ use std::{
     cell::RefCell,
     collections::LinkedList,
     ffi::{CStr, CString},
+    fmt::format,
     fs,
     os::raw::c_char,
     path::Path,
-    rc::Rc, fmt::format,
+    rc::Rc,
 };
 
 use dsl_llvm::IRBuilder;
@@ -141,15 +142,33 @@ fn main() {
 
     let core = symbols.add_child(&"core", SymbolValue::Module);
     for i in [8, 16, 32, 64] {
-        core.add_child(&format!("int{}", i), SymbolValue::Primitive(IRBuilder::get_int(i)));
-        core.add_child(&format!("uint{}", i), SymbolValue::Primitive(IRBuilder::get_uint(i)));
+        core.add_child(
+            &format!("int{}", i),
+            SymbolValue::Primitive(IRBuilder::get_int(i)),
+        );
+        core.add_child(
+            &format!("uint{}", i),
+            SymbolValue::Primitive(IRBuilder::get_uint(i)),
+        );
     }
-    core.add_child(&format!("bool"), SymbolValue::Primitive(IRBuilder::get_bool()));
+    core.add_child(
+        &format!("bool"),
+        SymbolValue::Primitive(IRBuilder::get_bool()),
+    );
 
-    core.add_child(&format!("char"), SymbolValue::Primitive(IRBuilder::get_uint_8()));
+    core.add_child(
+        &format!("char"),
+        SymbolValue::Primitive(IRBuilder::get_uint_8()),
+    );
 
-    core.add_child(&format!("float32"), SymbolValue::Primitive(IRBuilder::get_float32()));
-    core.add_child(&format!("float64"), SymbolValue::Primitive(IRBuilder::get_float64()));
+    core.add_child(
+        &format!("float32"),
+        SymbolValue::Primitive(IRBuilder::get_float32()),
+    );
+    core.add_child(
+        &format!("float64"),
+        SymbolValue::Primitive(IRBuilder::get_float64()),
+    );
 
     let path = Path::new("test/test.dsl");
 
@@ -161,7 +180,8 @@ fn main() {
         ltokens.push_back(tok);
     }
 
-    let ast = dsl_parser::parse_from_tokens(&ltokens).unwrap();
+    let parser = dsl_parser::Parser::parse_from_tokens(&ltokens).unwrap();
+    let ast = parser.get_ast();
     println!("{}", ast.format());
 
     let name = CString::new(path.to_str().unwrap()).expect("Unable to create model name");
@@ -174,9 +194,11 @@ fn main() {
         let name = module_name.to_string();
 
         let module =
-            dsl_code_generation::module::Module::new(&name, Box::new(ast), module, symbols.clone());
+            dsl_code_generation::module::Module::new(&name, Box::new(ast.clone()), module, symbols.clone());
 
         module.gen();
+
+        parser.print_errors();
 
         let sym = symbols.borrow();
         println!("{}", sym.format());

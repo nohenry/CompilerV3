@@ -12,7 +12,7 @@ use dsl_lexer::ast::{
 };
 
 use super::module::Module;
-use dsl_symbol::{GenericType, Symbol, SymbolValue, Type, Value};
+use dsl_symbol::{GenericType, Symbol, SymbolFlags, SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_parse_node(&self, node: &ParseNode) -> Value {
@@ -51,7 +51,11 @@ impl Module {
                         }),
                     );
 
-                    check!(self, self.add_generic_children(generic), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.add_generic_children(generic),
+                        Value
+                    );
 
                     self.pop_symbol();
                 } else if let (Some(generic), CodeGenPass::TemplateSpecialization) =
@@ -103,7 +107,11 @@ impl Module {
                         }),
                     );
 
-                    check!(self, self.add_special_generic_children(generic), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.add_special_generic_children(generic),
+                        Value
+                    );
 
                     self.pop_symbol();
                 } else if let (Some(generic), CodeGenPass::TemplateValues) =
@@ -173,11 +181,7 @@ impl Module {
                             for (name, ty) in types.into_iter() {
                                 children.insert(
                                     name.clone(),
-                                    Symbol {
-                                        name: name.clone(),
-                                        value: SymbolValue::Field(ty),
-                                        children: LinkedHashMap::new(),
-                                    },
+                                    Symbol::new(name.clone(), SymbolValue::Field(ty)),
                                 );
                             }
                         }
@@ -190,8 +194,11 @@ impl Module {
                             let mng = self.get_mangled_name(&name);
                             let mut pth = self.current_symbol.borrow().clone();
                             pth.push(name.clone());
-                            let template =
-                                check!(self, self.builder.create_struct_named(&pth, &mng), Value);
+                            let template = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_struct_named(&pth, &mng),
+                                Value
+                            );
                             self.add_and_set_symbol(&name, SymbolValue::Template(template));
 
                             self.pop_symbol();
@@ -220,11 +227,10 @@ impl Module {
 
                                         children.insert(
                                             name.clone(),
-                                            Symbol {
-                                                name: name.clone(),
-                                                value: SymbolValue::Field(ty.clone()),
-                                                children: LinkedHashMap::new(),
-                                            },
+                                            Symbol::new(
+                                                name.clone(),
+                                                SymbolValue::Field(ty.clone()),
+                                            ),
                                         );
                                     }
 
@@ -260,6 +266,7 @@ impl Module {
                 identifier,
                 possible_initializer,
                 variable_type,
+                is_const,
                 ..
             }) => {
                 match &*self.code_gen_pass.borrow() {
@@ -268,8 +275,8 @@ impl Module {
                 }
                 let place_var = if let Some((init, ..)) = possible_initializer {
                     let mut alloc = check!(
-                        self,
-                        self.builder.create_alloc(&IRBuilder::get_bool()),
+                        self.errors.borrow_mut(),
+                        self.builder.create_alloc(&IRBuilder::get_bool(), *is_const),
                         Value
                     );
 
@@ -292,7 +299,7 @@ impl Module {
                         };
 
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.set_allocated_type(
                                 &mut alloc,
                                 self.module,
@@ -303,13 +310,13 @@ impl Module {
                         );
 
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.create_store(&alloc, &&val, self.module),
                             Value
                         );
                     } else {
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.set_allocated_type(
                                 &mut alloc,
                                 self.module,
@@ -320,7 +327,7 @@ impl Module {
                         );
 
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.create_store(&alloc, &value, self.module),
                             Value
                         );
@@ -330,7 +337,11 @@ impl Module {
                 } else {
                     if let Some(ty) = variable_type {
                         let ty = self.gen_type(ty.as_ref());
-                        let place_var = check!(self, self.builder.create_alloc(&ty), Value);
+                        let place_var = check!(
+                            self.errors.borrow_mut(),
+                            self.builder.create_alloc(&ty, *is_const),
+                            Value
+                        );
                         place_var
                     } else {
                         self.add_error("Expected type or initializer!".to_string());
@@ -341,7 +352,15 @@ impl Module {
                 let name = identifier.as_string();
                 self.get_current_mut(|f| {
                     if let Some(sym) = f {
-                        sym.add_child(&name, SymbolValue::Variable(place_var.clone()));
+                        if *is_const {
+                            sym.add_child_flags(
+                                &name,
+                                SymbolValue::Variable(place_var.clone()),
+                                SymbolFlags::CONSTANT,
+                            );
+                        } else {
+                            sym.add_child(&name, SymbolValue::Variable(place_var.clone()));
+                        }
                     }
                 })
             }
@@ -383,7 +402,11 @@ impl Module {
                         }),
                     );
 
-                    check!(self, self.add_generic_children(generic), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.add_generic_children(generic),
+                        Value
+                    );
 
                     self.pop_symbol();
                 } else if let (Some(generic), CodeGenPass::SymbolsSpecialization) =
@@ -436,7 +459,11 @@ impl Module {
                         }),
                     );
 
-                    check!(self, self.add_special_generic_children(generic), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.add_special_generic_children(generic),
+                        Value
+                    );
 
                     self.pop_symbol();
                 } else {
@@ -456,7 +483,19 @@ impl Module {
                                         ..
                                     }) = current
                                     {
-                                        Some((f.symbol.as_string().clone(), t.clone().get_ptr()))
+                                        if let dsl_lexer::ast::Type::ConstSelf = f.symbol_type {
+                                            Some((
+                                                f.symbol.as_string().clone(),
+                                                t.clone().get_ptr(true),
+                                            ))
+                                        } else if let dsl_lexer::ast::Type::SELF = f.symbol_type {
+                                            Some((
+                                                f.symbol.as_string().clone(),
+                                                t.clone().get_ptr(false),
+                                            ))
+                                        } else {
+                                            panic!("Typejsconst mismathc idk (1)")
+                                        }
                                     } else {
                                         None
                                     }
@@ -477,7 +516,7 @@ impl Module {
                         let function_type = IRBuilder::get_fn(return_type.clone(), &types);
 
                         let function = check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.add_function(
                                 function_type,
                                 self.get_mangled_name(&name),
@@ -500,6 +539,7 @@ impl Module {
                                         SymbolValue::Variable(Value::Variable {
                                             llvm_value: std::ptr::null_mut(),
                                             variable_type: ty.clone(),
+                                            constant: true,
                                         }),
                                     );
                                 }
@@ -530,8 +570,11 @@ impl Module {
                                 ..
                             }) = current
                             {
-                                let block =
-                                    check!(self, self.builder.append_block(&function), Value);
+                                let block = check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.append_block(&function),
+                                    Value
+                                );
 
                                 self.current_block.replace(block);
                                 self.builder.set_position_end(&self.current_block.borrow());
@@ -540,9 +583,9 @@ impl Module {
 
                                 let pallocs: Result<Vec<Value>, _> = parameters
                                     .iter()
-                                    .map(|(_name, ty)| self.builder.create_alloc(ty))
+                                    .map(|(_name, ty)| self.builder.create_alloc(ty, true))
                                     .collect();
-                                let pallocs = check!(self, pallocs, Value);
+                                let pallocs = check!(self.errors.borrow_mut(), pallocs, Value);
 
                                 let res: Result<(), _> = pallocs
                                     .iter()
@@ -567,11 +610,15 @@ impl Module {
                                     })
                                     .collect();
 
-                                check!(self, res, Value);
+                                check!(self.errors.borrow_mut(), res, Value);
 
                                 let alloc = match &**return_type {
                                     Type::Unit { .. } => None,
-                                    ty => Some(check!(self, self.builder.create_alloc(ty), Value)),
+                                    ty => Some(check!(
+                                        self.errors.borrow_mut(),
+                                        self.builder.create_alloc(ty, false),
+                                        Value
+                                    )),
                                 };
 
                                 Some((alloc, pallocs))
@@ -607,13 +654,17 @@ impl Module {
                             if let Some(alloc) = alloc {
                                 if val.has_value() {
                                     check!(
-                                        self,
+                                        self.errors.borrow_mut(),
                                         self.builder.create_store(&alloc, &val, self.module),
                                         Value
                                     );
                                 }
 
-                                check!(self, self.builder.create_ret(&alloc), Value);
+                                check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.create_ret(&alloc),
+                                    Value
+                                );
                             } else {
                                 self.builder.create_ret_void();
                             }

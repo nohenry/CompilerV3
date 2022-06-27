@@ -1,21 +1,16 @@
 use dsl_errors::{check, CodeGenError};
 use dsl_llvm::IRBuilder;
-use llvm_sys::core::{
-    LLVMBuildSelect, LLVMGetParam, LLVMInstructionRemoveFromParent, LLVMIsConstant,
-    LLVMPrintModuleToString,
-};
-use llvm_sys::target::LLVMGetModuleDataLayout;
+use llvm_sys::core::LLVMGetParam;
 use llvm_sys::{LLVMIntPredicate, LLVMNumberOfChildrenInBlock, LLVMOpcode, LLVMRealPredicate};
 
 use dsl_lexer::ast::{
     BinaryExpression, Expression, FunctionCall, IfExpression, IndexExpression, Literal, Loop,
     LoopExpression, UnaryExpression,
 };
-use dsl_lexer::{OperatorKind, TokenKind};
-use dsl_util::cast;
+use dsl_lexer::OperatorKind;
 
 use super::module::Module;
-use dsl_symbol::{Symbol, SymbolValue, Type, Value};
+use dsl_symbol::{Symbol, SymbolFlags, SymbolValue, Type, Value};
 
 impl Module {
     pub(super) fn gen_expression(&self, expression: &Expression) -> Value {
@@ -34,8 +29,13 @@ impl Module {
                         let left = self.gen_expression(oleft);
                         let right = self.gen_expression(oright);
 
+                        if left.is_const() {
+                            self.add_error("Attempted to assign to constant value!".into());
+                            return Value::Empty;
+                        }
+
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.create_store(&left, &right, self.module),
                             Value
                         );
@@ -165,7 +165,7 @@ impl Module {
                                                                     _ => (),
                                                                 }
                                                                 var = check!(
-                                                                    self,
+                                                                    self.errors.borrow_mut(),
                                                                     self.builder.create_struct_gep(
                                                                         &var,
                                                                         ty.clone(),
@@ -230,7 +230,7 @@ impl Module {
                                             }
                                         };
                                         return check!(
-                                            self,
+                                            self.errors.borrow_mut(),
                                             self.builder.create_icompare(&left, &right, func),
                                             Value
                                         );
@@ -248,7 +248,7 @@ impl Module {
                                             }
                                         };
                                         return check!(
-                                            self,
+                                            self.errors.borrow_mut(),
                                             self.builder.create_icompare(&left, &right, func),
                                             Value
                                         );
@@ -265,7 +265,7 @@ impl Module {
                                             }
                                         };
                                         return check!(
-                                            self,
+                                            self.errors.borrow_mut(),
                                             self.builder.create_fcompare(&left, &right, func),
                                             Value
                                         );
@@ -284,10 +284,18 @@ impl Module {
                         let left = self.gen_expression(oleft);
                         let right = self.gen_expression(oright);
 
-                        let op =
-                            check!(self, self.builder.create_bin_op(&left, &right, oper), Value);
+                        if left.is_const() {
+                            self.add_error("Attempted to assign to constant value!".into());
+                            return Value::Empty;
+                        }
+
+                        let op = check!(
+                            self.errors.borrow_mut(),
+                            self.builder.create_bin_op(&left, &right, oper),
+                            Value
+                        );
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.create_store(&left, &op, self.module),
                             Value
                         );
@@ -300,7 +308,11 @@ impl Module {
                 let left = self.gen_expression(oleft);
                 let right = self.gen_expression(oright);
 
-                check!(self, self.builder.create_bin_op(&left, &right, func), Value)
+                check!(
+                    self.errors.borrow_mut(),
+                    self.builder.create_bin_op(&left, &right, func),
+                    Value
+                )
             }
             Expression::UnaryExpression(UnaryExpression {
                 expression,
@@ -310,7 +322,11 @@ impl Module {
                 OperatorKind::Minus => {
                     let expr = self.gen_expression(&expression);
 
-                    check!(self, self.builder.create_neg(&expr), Value)
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_neg(&expr),
+                        Value
+                    )
                 }
                 OperatorKind::BitAnd => {
                     let value = self.gen_expression(&expression);
@@ -319,9 +335,10 @@ impl Module {
                         Value::Variable {
                             llvm_value,
                             variable_type,
+                            constant,
                         } => Value::Literal {
                             llvm_value,
-                            literal_type: IRBuilder::get_ptr(&variable_type),
+                            literal_type: IRBuilder::get_ptr(&variable_type, constant),
                         },
                         _ => Value::Empty,
                     }
@@ -330,15 +347,25 @@ impl Module {
                     let value = self.gen_expression(&expression);
                     match &value {
                         Value::Variable { .. } => {
-                            let value = check!(self, self.builder.create_load(&value), Value);
+                            let value = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_load(&value),
+                                Value
+                            );
 
                             match value {
                                 Value::Literal {
                                     llvm_value,
-                                    literal_type: Type::Reference { base_type, .. },
+                                    literal_type:
+                                        Type::Reference {
+                                            base_type,
+                                            constant,
+                                            ..
+                                        },
                                 } => Value::Variable {
                                     llvm_value,
                                     variable_type: *base_type,
+                                    constant,
                                 },
                                 _ => Value::Empty,
                             }
@@ -377,7 +404,7 @@ impl Module {
                 let indicies = [index0, right];
 
                 check!(
-                    self,
+                    self.errors.borrow_mut(),
                     self.builder
                         .create_gep_inbound(&left, *base_type, &indicies),
                     Value
@@ -408,14 +435,19 @@ impl Module {
             }) => {
                 let condition = self.gen_expression(&condition);
 
-                let if_body = check!(self, self.builder.create_block(), Value);
+                let if_body = check!(self.errors.borrow_mut(), self.builder.create_block(), Value);
 
                 if let Some((_, ec)) = else_clause {
-                    let else_body = check!(self, self.builder.create_block(), Value);
+                    let else_body =
+                        check!(self.errors.borrow_mut(), self.builder.create_block(), Value);
 
                     let (end, empty) = match &*self.jump_point.borrow() {
                         Value::Empty => {
-                            let end = check!(self, self.builder.create_block(), Value);
+                            let end = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_block(),
+                                Value
+                            );
                             (end, true)
                         }
                         Value::Block { llvm_value } => (
@@ -442,7 +474,11 @@ impl Module {
                         _ => 0,
                     };
 
-                    let if_const = check!(self, self.builder.is_constant(&if_ret), Value);
+                    let if_const = check!(
+                        self.errors.borrow_mut(),
+                        self.builder.is_constant(&if_ret),
+                        Value
+                    );
 
                     self.builder.set_position_end(&else_body);
                     let else_ret = self.gen_parse_node(&ec);
@@ -453,30 +489,38 @@ impl Module {
                         _ => 0,
                     };
 
-                    let else_const = check!(self, self.builder.is_constant(&if_ret), Value);
+                    let else_const = check!(
+                        self.errors.borrow_mut(),
+                        self.builder.is_constant(&if_ret),
+                        Value
+                    );
 
                     if !(if_const && else_const && if_n == 0 && else_n == 0
                         || if_n <= 1 && else_n <= 1)
                     {
                         self.builder.set_position_end(&*self.current_block.borrow());
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder
                                 .create_cbranch(&condition, &if_body, &else_body),
                             Value
                         );
 
                         self.builder.set_position_end(&if_body);
-                        check!(self, self.builder.create_branch(&end), Value);
+                        check!(
+                            self.errors.borrow_mut(),
+                            self.builder.create_branch(&end),
+                            Value
+                        );
 
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder
                                 .append_existing_block(&self.current_function.borrow(), &if_body),
                             Value
                         );
                         check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder
                                 .append_existing_block(&self.current_function.borrow(), &else_body),
                             Value
@@ -486,13 +530,17 @@ impl Module {
 
                         if empty {
                             check!(
-                                self,
+                                self.errors.borrow_mut(),
                                 self.builder
                                     .append_existing_block(&self.current_function.borrow(), &end),
                                 Value
                             );
 
-                            check!(self, self.builder.create_branch(&end), Value);
+                            check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_branch(&end),
+                                Value
+                            );
                         }
 
                         self.builder.set_position_end(&end);
@@ -503,7 +551,7 @@ impl Module {
                             (_, Value::Empty) => (),
                             (a, b) => {
                                 let p = check!(
-                                    self,
+                                    self.errors.borrow_mut(),
                                     self.builder.create_phi(a, b, &if_body, &else_body),
                                     Value
                                 );
@@ -514,7 +562,7 @@ impl Module {
                         self.builder.set_position_end(&*self.current_block.borrow());
 
                         return check!(
-                            self,
+                            self.errors.borrow_mut(),
                             self.builder.create_select(&condition, &if_ret, &else_ret),
                             Value
                         );
@@ -527,7 +575,7 @@ impl Module {
                     let (end, empty) = match &*self.jump_point.borrow() {
                         Value::Empty => {
                             let end = check!(
-                                self,
+                                self.errors.borrow_mut(),
                                 self.builder.append_block(&self.current_function.borrow()),
                                 Value
                             );
@@ -549,14 +597,18 @@ impl Module {
                     }
 
                     check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder.create_cbranch(&condition, &if_body, &end),
                         Value
                     );
 
                     self.builder.set_position_end(&if_body);
                     self.gen_parse_node(&body);
-                    check!(self, self.builder.create_branch(&end), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_branch(&end),
+                        Value
+                    );
 
                     self.builder.set_position_end(&end);
                     if empty {
@@ -569,28 +621,33 @@ impl Module {
             Expression::LoopExpression(LoopExpression { loop_type, .. }) => match loop_type {
                 Loop::Until(cond, body) => {
                     let condition_block = check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder.append_block(&self.current_function.borrow()),
                         Value
                     );
 
-                    let body_block = check!(self, self.builder.create_block(), Value);
+                    let body_block =
+                        check!(self.errors.borrow_mut(), self.builder.create_block(), Value);
 
-                    let end = check!(self, self.builder.create_block(), Value);
+                    let end = check!(self.errors.borrow_mut(), self.builder.create_block(), Value);
 
-                    check!(self, self.builder.create_branch(&condition_block), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_branch(&condition_block),
+                        Value
+                    );
 
                     self.builder.set_position_end(&condition_block);
                     let cond = self.gen_expression(cond);
 
                     check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder.create_cbranch(&cond, &body_block, &end),
                         Value
                     );
 
                     check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder
                             .append_existing_block(&self.current_function.borrow(), &body_block),
                         Value
@@ -600,10 +657,14 @@ impl Module {
 
                     self.gen_parse_node(body);
 
-                    let val = check!(self, self.builder.create_branch(&condition_block), Value);
+                    let val = check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_branch(&condition_block),
+                        Value
+                    );
 
                     check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder
                             .append_existing_block(&self.current_function.borrow(), &end),
                         Value
@@ -615,17 +676,25 @@ impl Module {
                 }
                 Loop::Infinite(body) => {
                     let loop_block = check!(
-                        self,
+                        self.errors.borrow_mut(),
                         self.builder.append_block(&self.current_function.borrow()),
                         Value
                     );
-                    check!(self, self.builder.create_branch(&loop_block), Value);
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_branch(&loop_block),
+                        Value
+                    );
 
                     self.builder.set_position_end(&loop_block);
 
                     self.gen_parse_node(body);
 
-                    check!(self, self.builder.create_branch(&loop_block), Value)
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_branch(&loop_block),
+                        Value
+                    )
                 }
             },
             Expression::FunctionCall(FunctionCall {
@@ -767,12 +836,15 @@ impl Module {
 
                                             if let Some(Symbol {
                                                 value: SymbolValue::Template(t),
+                                                flags,
                                                 ..
                                             }) = current
                                             {
                                                 Some((
                                                     f.symbol.as_string().clone(),
-                                                    t.clone().get_ptr(),
+                                                    t.clone().get_ptr(
+                                                        flags.contains(SymbolFlags::CONSTANT),
+                                                    ),
                                                 ))
                                             } else {
                                                 None
@@ -800,12 +872,16 @@ impl Module {
 
                             let mng = self.get_mangled_name_with_path(path, &name);
                             let function = check!(
-                                self,
+                                self.errors.borrow_mut(),
                                 self.builder.add_function(function_type, mng, self.module),
                                 Value
                             );
 
-                            let block = check!(self, self.builder.append_block(&function), Value);
+                            let block = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.append_block(&function),
+                                Value
+                            );
 
                             self.current_block.replace(block);
                             self.builder.set_position_end(&self.current_block.borrow());
@@ -820,9 +896,9 @@ impl Module {
 
                             let pallocs: Result<Vec<Value>, _> = types
                                 .iter()
-                                .map(|(_name, ty)| self.builder.create_alloc(ty))
+                                .map(|(_name, ty)| self.builder.create_alloc(ty, true))
                                 .collect();
-                            let pallocs = check!(self, pallocs, Value);
+                            let pallocs = check!(self.errors.borrow_mut(), pallocs, Value);
 
                             let res: Result<(), _> = pallocs
                                 .iter()
@@ -846,7 +922,7 @@ impl Module {
                                 })
                                 .collect();
 
-                            check!(self, res, Value);
+                            check!(self.errors.borrow_mut(), res, Value);
 
                             {
                                 let mut cur_sym = self.symbol_root.borrow_mut();
@@ -863,7 +939,11 @@ impl Module {
 
                             let alloc = match return_type {
                                 Type::Unit { .. } => None,
-                                ty => Some(check!(self, self.builder.create_alloc(&ty), Value)),
+                                ty => Some(check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.create_alloc(&ty, false),
+                                    Value
+                                )),
                             };
 
                             let val = if let Some(special) = specialization {
@@ -889,13 +969,17 @@ impl Module {
                             if let Some(alloc) = alloc {
                                 if val.has_value() {
                                     check!(
-                                        self,
+                                        self.errors.borrow_mut(),
                                         self.builder.create_store(&alloc, &val, self.module),
                                         Value
                                     );
                                 }
 
-                                check!(self, self.builder.create_ret(&alloc), Value);
+                                check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.create_ret(&alloc),
+                                    Value
+                                );
                             } else {
                                 self.builder.create_ret_void();
                             }
@@ -934,7 +1018,11 @@ impl Module {
                             ..
                         }) = current
                         {
-                            check!(self, self.builder.create_fn_call(val, arguments), Value)
+                            check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_fn_call(val, arguments),
+                                Value
+                            )
                         } else {
                             Value::Empty
                         }
@@ -942,7 +1030,11 @@ impl Module {
                         Value::Empty
                     }
                 } else {
-                    check!(self, self.builder.create_fn_call(&expr, arguments), Value)
+                    check!(
+                        self.errors.borrow_mut(),
+                        self.builder.create_fn_call(&expr, arguments),
+                        Value
+                    )
                 }
             }
             Expression::Block(values, _) => {

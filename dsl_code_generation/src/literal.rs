@@ -254,7 +254,7 @@ impl Module {
 
                                     let mng = self.get_mangled_name_with_path(path, &name);
                                     let template = check!(
-                                        self,
+                                        self.errors.borrow_mut(),
                                         self.builder.create_struct(&path, &mng, vars.clone()),
                                         Value
                                     );
@@ -275,7 +275,6 @@ impl Module {
                         };
 
                         self.current_symbol.replace(old_sym);
-
 
                         if let Some(name) = name {
                             let mut npath = Vec::from(&path[..path.len() - 1]);
@@ -457,7 +456,7 @@ impl Module {
 
                                     let mng = self.get_mangled_name_with_path(path, &name);
                                     let template = check!(
-                                        self,
+                                        self.errors.borrow_mut(),
                                         self.builder.create_struct(&path, &mng, vars.clone()),
                                         Value
                                     );

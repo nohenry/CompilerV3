@@ -9,3 +9,4 @@ edition = "2021"
 dsl_lexer = {path = "../dsl_lexer"}
 dsl_errors = {path = "../dsl_errors"}
 dsl_symbol = {path="../dsl_symbol"}
+colored = "2"

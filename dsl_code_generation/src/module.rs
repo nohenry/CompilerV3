@@ -71,7 +71,7 @@ impl Module {
                             IRBuilder::get_unit(),
                             &vec![(
                                 "str".to_string(),
-                                IRBuilder::get_ptr(&IRBuilder::get_uint_8()),
+                                IRBuilder::get_ptr(&IRBuilder::get_uint_8(), false),
                             )],
                         ),
                         "printf".to_string(),

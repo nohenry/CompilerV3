@@ -10,15 +10,15 @@ action uint32 {
 }
 
 action Data {
-    act(self) => {
-        self.x = 6
+    act(const self) => {
     }
 }
 
 main(x: int32) => {
-    let data = Data {
+    const data = Data {
         x: 9
     } 
+    data.act()
 
-    data.x = 8
+    (8).inc()
 }

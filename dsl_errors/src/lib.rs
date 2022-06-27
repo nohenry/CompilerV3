@@ -43,11 +43,11 @@ pub struct CodeGenError {
 
 #[macro_export]
 macro_rules! check {
-    ($self:ident,$e:expr,$empty:ident) => {
+    ($errs:expr,$e:expr,$empty:ident) => {
         match $e {
             Ok(t) => t,
             Err(e) => {
-                $self.errors.borrow_mut().push(e);
+                $errs.push(e);
                 return $empty::Empty;
             }
         }
@@ -55,7 +55,7 @@ macro_rules! check {
     ($e:expr) => {{
         let e = $e;
         if e.is_empty() {
-            return Value::Empty;
+            return $empty::Empty;
         } else {
             e
         }

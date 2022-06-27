@@ -16,6 +16,8 @@ use llvm_sys::{
     LLVMBuildAlignedLoad, LLVMGetTypeSize, LLVMGetValueAt, LLVMTypeKind,
 };
 
+use bitflags::bitflags;
+
 #[derive(Debug, Clone)]
 pub enum GenericType {
     Generic(Option<Vec<Type>>),
@@ -41,6 +43,7 @@ pub enum Value {
     Variable {
         llvm_value: LLVMValueRef,
         variable_type: Type,
+        constant: bool,
     },
     Function {
         llvm_value: LLVMValueRef,
@@ -75,6 +78,7 @@ pub enum Value {
     Load {
         llvm_value: LLVMValueRef,
         load_type: Type,
+        constant: bool,
     },
 }
 
@@ -110,6 +114,17 @@ impl Value {
         }
     }
 
+    pub fn is_const(&self) -> bool {
+        match self {
+            Value::Variable {
+                constant,
+                variable_type,
+                ..
+            } => *constant | variable_type.is_const(),
+            _ => panic!(),
+        }
+    }
+
     pub fn has_value(&self) -> bool {
         match self {
             Value::Empty | Value::Instruction { .. } | Value::Block { .. } => false,
@@ -135,6 +150,7 @@ impl Value {
             Value::Variable {
                 llvm_value,
                 variable_type,
+                ..
             } => unsafe {
                 let mods = LLVMGetModuleDataLayout(module);
                 let align = LLVMPreferredAlignmentOfType(mods, variable_type.get_type());
@@ -195,6 +211,7 @@ impl Value {
                         Type::Array {
                             base_type: lbtype, ..
                         },
+                    ..
                 }
                 | Value::Literal {
                     llvm_value: lvalue,
@@ -206,6 +223,7 @@ impl Value {
                 Type::Reference {
                     llvm_type: rtype,
                     base_type: rbtype,
+                    ..
                 },
             ) => {
                 if lbtype != rbtype {
@@ -222,6 +240,7 @@ impl Value {
                 Value::Variable {
                     llvm_value: lvalue,
                     variable_type: Type::String { .. },
+                    ..
                 }
                 | Value::Literal {
                     llvm_value: lvalue,
@@ -230,6 +249,7 @@ impl Value {
                 Type::Reference {
                     llvm_type: rtype,
                     base_type: rbtype,
+                    ..
                 },
             ) => {
                 if (Type::Integer {
@@ -348,9 +368,10 @@ impl Value {
             Value::Variable {
                 llvm_value,
                 variable_type,
+                constant,
             } => Value::Literal {
                 llvm_value: *llvm_value,
-                literal_type: variable_type.get_ptr(),
+                literal_type: variable_type.get_ptr(*constant),
             },
             _ => panic!(),
         }
@@ -370,12 +391,16 @@ impl Value {
                     Type::Reference {
                         base_type,
                         llvm_type,
+                        constant,
+                        ..
                     },
+                ..
             } => unsafe {
                 let llvm_value = LLVMBuildLoad2(builder, *llvm_type, *llvm_value, NULL_STR);
                 let ret = Value::Load {
                     llvm_value,
                     load_type: *base_type.clone(),
+                    constant: *constant,
                 };
                 ret
             },
@@ -463,6 +488,7 @@ pub enum Type {
     Reference {
         llvm_type: LLVMTypeRef,
         base_type: Box<Type>,
+        constant: bool,
     },
     Function {
         llvm_type: LLVMTypeRef,
@@ -571,12 +597,20 @@ impl Type {
         }
     }
 
-    pub fn get_ptr(&self) -> Type {
+    pub fn get_ptr(&self, constant: bool) -> Type {
         let ty = self.get_type();
         let llvm_type = unsafe { LLVMPointerType(ty, 0) };
         Type::Reference {
             llvm_type,
             base_type: Box::new(self.clone()),
+            constant,
+        }
+    }
+
+    pub fn is_const(&self) -> bool {
+        match self {
+            Type::Reference { constant, .. } => *constant,
+            _ => false,
         }
     }
 
@@ -780,12 +814,14 @@ impl PartialEq for Type {
                 Self::Reference {
                     llvm_type: l_llvm_type,
                     base_type: l_base_type,
+                    constant: l_const,
                 },
                 Self::Reference {
                     llvm_type: r_llvm_type,
                     base_type: r_base_type,
+                    constant: r_const,
                 },
-            ) => l_llvm_type == r_llvm_type && l_base_type == r_base_type,
+            ) => l_llvm_type == r_llvm_type && l_base_type == r_base_type && l_const == r_const,
             (
                 Self::Function {
                     llvm_type: l_llvm_type,
@@ -815,6 +851,12 @@ impl PartialEq for Type {
     }
 }
 
+bitflags! {
+    pub struct SymbolFlags: u32 {
+        const CONSTANT = 0b00000001;
+    }
+}
+
 #[derive(Debug)]
 pub enum SymbolValue {
     Empty,
@@ -830,11 +872,21 @@ pub enum SymbolValue {
     Module,
 }
 
+impl SymbolValue {
+    pub fn is_const(&self) -> bool {
+        match self {
+            Self::Variable(v) => v.is_const(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Symbol {
     pub name: String,
     pub value: SymbolValue,
     pub children: LinkedHashMap<String, Symbol>,
+    pub flags: SymbolFlags,
 }
 
 impl Symbol {
@@ -843,6 +895,7 @@ impl Symbol {
             name: String::from("root"),
             value: SymbolValue::Empty,
             children: LinkedHashMap::new(),
+            flags: SymbolFlags::empty(),
         }
     }
 
@@ -851,6 +904,16 @@ impl Symbol {
             name,
             value,
             children: LinkedHashMap::new(),
+            flags: SymbolFlags::empty(),
+        }
+    }
+
+    pub fn new_flags(name: String, value: SymbolValue, flags: SymbolFlags) -> Symbol {
+        Symbol {
+            name,
+            value,
+            children: LinkedHashMap::new(),
+            flags,
         }
     }
 
@@ -859,22 +922,57 @@ impl Symbol {
             .insert(name.to_string(), Symbol::new(name.to_string(), value));
         self.children.get_mut(&name.to_string()).unwrap()
     }
+
+    pub fn add_child_flags<T: ToString>(
+        &mut self,
+        name: &T,
+        value: SymbolValue,
+        flags: SymbolFlags,
+    ) -> &mut Symbol {
+        self.children.insert(
+            name.to_string(),
+            Symbol::new_flags(name.to_string(), value, flags),
+        );
+        self.children.get_mut(&name.to_string()).unwrap()
+    }
 }
 
 impl Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.value {
-            SymbolValue::Variable(_) => write!(f, "Variable `{}`", self.name),
-            SymbolValue::Action(_) => write!(f, "Action `{}`", self.name),
-            SymbolValue::Alias(_) => write!(f, "Alias `{}`", self.name),
-            SymbolValue::Empty => write!(f, "{}", self.name),
-            SymbolValue::Field(_) => write!(f, "Field `{}`", self.name),
-            SymbolValue::Funtion(_) => write!(f, "Function `{}`", self.name),
-            SymbolValue::Module => write!(f, "Module `{}`", self.name),
-            SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
-            SymbolValue::Template(_) => write!(f, "Template `{}`", self.name),
-            SymbolValue::Primitive(_) => write!(f, "Primititve `{}`", self.name),
-            SymbolValue::Generic(_, _) => write!(f, "Generic `{}`", self.name),
+        if self.flags.is_empty() {
+            match self.value {
+                SymbolValue::Variable(_) => write!(f, "Variable `{}`", self.name),
+                SymbolValue::Action(_) => write!(f, "Action `{}`", self.name),
+                SymbolValue::Alias(_) => write!(f, "Alias `{}`", self.name),
+                SymbolValue::Empty => write!(f, "{}", self.name),
+                SymbolValue::Field(_) => write!(f, "Field `{}`", self.name),
+                SymbolValue::Funtion(_) => write!(f, "Function `{}`", self.name),
+                SymbolValue::Module => write!(f, "Module `{}`", self.name),
+                SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
+                SymbolValue::Template(_) => write!(f, "Template `{}`", self.name),
+                SymbolValue::Primitive(_) => write!(f, "Primititve `{}`", self.name),
+                SymbolValue::Generic(_, _) => write!(f, "Generic `{}`", self.name),
+            }
+        } else {
+            match self.value {
+                SymbolValue::Variable(_) => {
+                    write!(f, "Variable `{}` ({:?})", self.name, self.flags)
+                }
+                SymbolValue::Action(_) => write!(f, "Action `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Alias(_) => write!(f, "Alias `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Empty => write!(f, "{} ({:?})", self.name, self.flags),
+                SymbolValue::Field(_) => write!(f, "Field `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Funtion(_) => write!(f, "Function `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Module => write!(f, "Module `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Spec(_) => write!(f, "Spec `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Template(_) => {
+                    write!(f, "Template `{}` ({:?})", self.name, self.flags)
+                }
+                SymbolValue::Primitive(_) => {
+                    write!(f, "Primititve `{}` {:?}", self.name, self.flags)
+                }
+                SymbolValue::Generic(_, _) => write!(f, "Generic `{}` {:?}", self.name, self.flags),
+            }
         }
     }
 }

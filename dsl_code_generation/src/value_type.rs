@@ -98,6 +98,7 @@ impl Module {
                     dsl_symbol::Type::Reference {
                         llvm_type: LLVMPointerType(ty.get_type(), 0),
                         base_type: Box::new(ty),
+                        constant: false
                     }
                 }
             }
