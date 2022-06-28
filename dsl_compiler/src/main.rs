@@ -180,7 +180,7 @@ fn main() {
         ltokens.push_back(tok);
     }
 
-    let parser = dsl_parser::Parser::parse_from_tokens(&ltokens).unwrap();
+    let parser = dsl_parser::Parser::parse_from_tokens(&ltokens);
     let ast = parser.get_ast();
     println!("{}", ast.format());
 
@@ -193,8 +193,12 @@ fn main() {
         let module = LLVMModuleCreateWithName(module_name.as_ptr() as *const i8);
         let name = module_name.to_string();
 
-        let module =
-            dsl_code_generation::module::Module::new(&name, Box::new(ast.clone()), module, symbols.clone());
+        let module = dsl_code_generation::module::Module::new(
+            &name,
+            Box::new(ast.clone()),
+            module,
+            symbols.clone(),
+        );
 
         module.gen();
 

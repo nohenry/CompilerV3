@@ -1,11 +1,7 @@
-struct Data {
-    x: u32,
-    y: u32,
+fn af(f: &u32) {
+
 }
 
 fn main() {
-    let data = Data {
-        x: 5,
-        y: 7
-    };
+    af(&5)    ;
 }

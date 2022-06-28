@@ -52,7 +52,7 @@ macro_rules! check {
             }
         }
     };
-    ($e:expr) => {{
+    ($e:expr,$empty:ident) => {{
         let e = $e;
         if e.is_empty() {
             return $empty::Empty;
@@ -60,4 +60,31 @@ macro_rules! check {
             e
         }
     }};
+}
+
+#[macro_export]
+macro_rules! ptry {
+    ($self:expr,$e:expr) => {
+        match $e {
+            Ok(t) => t,
+            Err(e) => {
+                $self.errors.push(e);
+                return None;
+            }
+        }
+    };
+    ($e:expr) => {{
+        if let Some(e) = $e {
+            e
+        } else {
+            return None;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! pexpect {
+    ($self:expr,$e:expr) => {
+        ptry!($self, $self.expect($e, line!()))
+    };
 }

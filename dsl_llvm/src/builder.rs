@@ -374,7 +374,7 @@ impl IRBuilder {
         Ok(Value::Load {
             llvm_value: value,
             load_type: val.get_type().clone(),
-            constant: val.is_const()
+            constant: val.is_const(),
         })
     }
 
@@ -612,7 +612,7 @@ impl IRBuilder {
             Value::Load {
                 llvm_value,
                 load_type,
-                constant
+                constant,
             } => {
                 let value = unsafe {
                     LLVMBuildStructGEP2(
@@ -626,13 +626,13 @@ impl IRBuilder {
                 Ok(Value::Variable {
                     llvm_value: value,
                     variable_type: base_type,
-                    constant
+                    constant,
                 })
             }
             Value::Variable {
                 llvm_value,
                 variable_type,
-                constant
+                constant,
             } => {
                 let value = unsafe {
                     LLVMBuildStructGEP2(
@@ -646,7 +646,7 @@ impl IRBuilder {
                 Ok(Value::Variable {
                     llvm_value: value,
                     variable_type: base_type,
-                    constant
+                    constant,
                 })
             }
             _ => Err(CodeGenError {
@@ -783,7 +783,7 @@ impl IRBuilder {
                     },
                 var,
             } => {
-                args.push(var.get_ptr());
+                args.push(var.get_ptr(self.module));
                 gen(
                     &args,
                     parameters,
@@ -811,7 +811,7 @@ impl IRBuilder {
                         llvm_type,
                         parameters,
                     },
-                    ..
+                ..
             } => gen(
                 &args,
                 parameters,

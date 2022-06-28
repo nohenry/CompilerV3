@@ -1,4 +1,5 @@
 #![feature(linked_list_cursors)]
+#![feature(let_else)]
 use std::collections::{linked_list::Cursor, LinkedList};
 
 use colored::{ColoredString, Colorize};
@@ -13,7 +14,7 @@ use dsl_lexer::{
     default_range, Keyword, KeywordKind, Operator, OperatorKind, Range, Token, TokenKind,
 };
 
-use dsl_errors::{check, ParseError};
+use dsl_errors::{pexpect, ptry, ParseError};
 
 pub struct Parser<'a> {
     tokens: Cursor<'a, &'a Token>,
@@ -38,8 +39,9 @@ impl<'a> Parser<'a> {
         &self.errors
     }
 
-    pub fn add_error(&mut self, error: ParseError) {
+    pub fn add_error<T>(&mut self, error: ParseError) -> Option<T> {
         self.errors.push(error);
+        None
     }
 
     pub fn print_errors(&self) {
@@ -60,13 +62,25 @@ impl<'a> Parser<'a> {
             default_range()
         };
 
+        let mut last_index = parser.tokens.index().unwrap();
+
         while let Some(_) = parser.tokens.current() {
             let statement = parser.parse_top_level_statement();
-            match statement {
-                ParseNode::Tag(_, _) => {
-                    current_tags.push(statement);
+
+            if let Some(index) = parser.tokens.index() {
+                if index == last_index {
+                    parser.tokens.move_next();
                 }
-                _ => {
+
+                last_index = index;
+            }
+
+            match statement {
+                None => (),
+                Some(tag @ ParseNode::Tag(_, _)) => {
+                    current_tags.push(tag);
+                }
+                Some(statement) => {
                     if current_tags.len() > 0 {
                         statements.push(ParseNode::TagCollection(
                             current_tags.clone(),
@@ -97,10 +111,10 @@ impl<'a> Parser<'a> {
             (start.0, end.1),
         );
 
-        check!(parser)
+        parser
     }
 
-    fn parse_top_level_statement(&mut self) -> ParseNode {
+    fn parse_top_level_statement(&mut self) -> Option<ParseNode> {
         match self.tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::OpenBracket => self.parse_tag(),
@@ -111,17 +125,10 @@ impl<'a> Parser<'a> {
                     }
                     KeywordKind::Type => {
                         self.tokens.move_next();
-                        let new_type = check!(
-                            self.errors,
-                            self.expect(TokenKind::Ident(String::from("")), line!()),
-                            ParseNode
-                        );
-                        let eq = check!(
-                            self.errors,
-                            self.expect(Operator::create_expect(OperatorKind::Assignment), line!()),
-                            ParseNode
-                        );
-                        let current_type = self.parse_type();
+                        let new_type = pexpect!(self, TokenKind::Ident(String::from("")));
+
+                        let eq = pexpect!(self, Operator::create_expect(OperatorKind::Assignment));
+                        let current_type = ptry!(self.parse_type());
 
                         let end = current_type.get_range().1;
 
@@ -133,21 +140,21 @@ impl<'a> Parser<'a> {
                             range: (t.range.0, end),
                         };
 
-                        check!(ParseNode::TypeDecleration(td))
+                        Some(ParseNode::TypeDecleration(td))
                     }
                     KeywordKind::Template => self.parse_template(),
                     KeywordKind::Action => self.parse_action(),
                     KeywordKind::Spec => self.parse_spec(),
-                    _ => Err(ParseError::new(&format!("Unexpected keyword {:?}", t))),
+                    _ => self.add_error(ParseError::new(&format!("Unexpected keyword {:?}", t))),
                 },
-                TokenKind::Ident(_) => check!(self.parse_function()),
-                _ => Err(ParseError::new(&format!("Unexpected token {:?}", t))),
+                TokenKind::Ident(_) => self.parse_function(),
+                _ => self.add_error(ParseError::new(&format!("Unexpected token {:?}", t))),
             },
-            None => check!(ParseNode::Empty),
+            None => None,
         }
     }
 
-    fn parse_statement(&mut self) -> ParseNode {
+    fn parse_statement(&mut self) -> Option<ParseNode> {
         match self.tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::Keyword(k) => match k.keyword {
@@ -156,49 +163,41 @@ impl<'a> Parser<'a> {
                     KeywordKind::Yield => {
                         let tok = self.tokens.current().unwrap();
                         self.tokens.move_next();
-                        check!(ParseNode::Yield(
-                            Box::new(self.parse_expression(0)),
+                        Some(ParseNode::Yield(
+                            Box::new(ptry!(self.parse_expression(0))),
                             tok.range,
                         ))
                     }
                     KeywordKind::Return => {
                         let tok = self.tokens.current().unwrap();
                         self.tokens.move_next();
-                        check!(ParseNode::Return(
-                            Box::new(self.parse_expression(0)),
+                        Some(ParseNode::Return(
+                            Box::new(ptry!(self.parse_expression(0))),
                             tok.range,
                         ))
                     }
                     _ => {
-                        let expr = self.parse_expression(0);
+                        let expr = ptry!(self.parse_expression(0));
                         // check!(self.errors, self.expect( TokenKind::Semi, line!()), ParseNode);
                         let rng = expr.get_range();
-                        check!(ParseNode::Expression(expr, rng))
+                        Some(ParseNode::Expression(expr, rng))
                     }
                 },
                 TokenKind::OpenBrace => self.parse_block_statement(),
                 _ => {
-                    let expr = self.parse_expression(0);
+                    let expr = ptry!(self.parse_expression(0));
                     // check!(self.errors, self.expect( TokenKind::Semi, line!()), ParseNode);
                     let rng = expr.get_range();
-                    check!(ParseNode::Expression(expr, rng))
+                    Some(ParseNode::Expression(expr, rng))
                 }
             },
-            None => check!(ParseNode::Empty),
+            None => None,
         }
     }
 
-    fn parse_template(&mut self) -> ParseNode {
-        let kw = check!(
-            self.errors,
-            self.expect(Keyword::create_expect(KeywordKind::Template), line!()),
-            ParseNode
-        );
-        let identifier = check!(
-            self.errors,
-            self.expect(TokenKind::Ident("".to_string()), line!()),
-            ParseNode
-        );
+    fn parse_template(&mut self) -> Option<ParseNode> {
+        let kw = pexpect!(self, Keyword::create_expect(KeywordKind::Template));
+        let identifier = pexpect!(self, TokenKind::Ident("".to_string()));
         let generic = if let Some(Token {
             token_type:
                 TokenKind::Operator(Operator {
@@ -208,16 +207,12 @@ impl<'a> Parser<'a> {
             ..
         }) = self.tokens.current()
         {
-            Some(Box::new(self.parse_generic()))
+            Some(Box::new(ptry!(self.parse_generic())))
         } else {
             None
         };
 
-        let ob = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBrace, line!()),
-            ParseNode
-        );
+        let ob = pexpect!(self, TokenKind::OpenBrace);
         let mut fields = vec![];
 
         while let Some(_) = self.tokens.current() {
@@ -229,17 +224,11 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let identifier = check!(
-                self.errors,
-                self.expect(TokenKind::Ident("".to_string()), line!()),
-                ParseNode
-            );
-            check!(
-                self.errors,
-                self.expect(TokenKind::Colon, line!()),
-                ParseNode
-            );
-            let field_type = self.parse_type();
+            let identifier = pexpect!(self, TokenKind::Ident("".to_string()));
+
+            pexpect!(self, TokenKind::Colon);
+
+            let field_type = ptry!(self.parse_type());
 
             let ts = TypeSymbol {
                 symbol_type: field_type,
@@ -248,11 +237,7 @@ impl<'a> Parser<'a> {
             fields.push(ts);
         }
 
-        let cb = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBrace, line!()),
-            ParseNode
-        );
+        let cb = pexpect!(self, TokenKind::CloseBrace);
         let sd = TemplateDecleration {
             struct_keyword: kw.clone().range,
             token: identifier.clone(),
@@ -260,15 +245,11 @@ impl<'a> Parser<'a> {
             generic,
             range: (kw.range.0, cb.range.1),
         };
-        check!(ParseNode::TemplateDecleration(sd))
+        Some(ParseNode::TemplateDecleration(sd))
     }
 
-    fn parse_action(&mut self) -> ParseNode {
-        let keyword = check!(
-            self.errors,
-            self.expect(Keyword::create_expect(KeywordKind::Action), line!()),
-            ParseNode
-        );
+    fn parse_action(&mut self) -> Option<ParseNode> {
+        let keyword = pexpect!(self, Keyword::create_expect(KeywordKind::Action));
         let generic = if let Some(Token {
             token_type:
                 TokenKind::Operator(Operator {
@@ -278,27 +259,23 @@ impl<'a> Parser<'a> {
             ..
         }) = self.tokens.current()
         {
-            Some(Box::new(self.parse_generic()))
+            Some(Box::new(ptry!(self.parse_generic())))
         } else {
             None
         };
 
-        let template_type = self.parse_type();
+        let template_type = ptry!(self.parse_type());
         let spec = match self.tokens.current() {
             Some(Token {
                 token_type: TokenKind::Colon,
                 ..
             }) => {
                 self.tokens.move_next();
-                Some(self.parse_type())
+                self.parse_type()
             }
             _ => None,
         };
-        let left = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBrace, line!()),
-            ParseNode
-        );
+        let left = pexpect!(self, TokenKind::OpenBrace);
         let mut statements = vec![];
 
         while let Some(_) = self.tokens.current() {
@@ -309,6 +286,7 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
+
             statements.push(self.parse_action_statement());
 
             // match self.tokens.peek() {
@@ -327,12 +305,11 @@ impl<'a> Parser<'a> {
             // };
         }
 
-        let right = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBrace, line!()),
-            ParseNode
-        );
-        check!(ParseNode::ActionDecleration(ActionDecleration {
+        let right = pexpect!(self, TokenKind::CloseBrace);
+
+        let statements = ptry!(statements.into_iter().map(|f| f).collect::<Option<_>>());
+
+        Some(ParseNode::ActionDecleration(ActionDecleration {
             action_keyword: keyword.range,
             template_type,
             generic,
@@ -345,28 +322,23 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_action_statement(&mut self) -> ParseNode {
+    fn parse_action_statement(&mut self) -> Option<ParseNode> {
         match self.tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::Ident(_) => self.parse_function(),
                 _ => {
-                    self.add_error(ParseError::new(&format!(
+                    return self.add_error(ParseError::new(&format!(
                         "Unexpected token {:?} found in action statement!",
                         t
-                    )));
-                    return ParseNode::Empty;
+                    )))
                 }
             },
-            None => check!(ParseNode::Empty),
+            None => None,
         }
     }
 
-    fn parse_spec(&mut self) -> ParseNode {
-        let keyword = check!(
-            self.errors,
-            self.expect(Keyword::create_expect(KeywordKind::Spec), line!()),
-            ParseNode
-        );
+    fn parse_spec(&mut self) -> Option<ParseNode> {
+        let keyword = pexpect!(self, Keyword::create_expect(KeywordKind::Spec));
         let generic = if let Some(Token {
             token_type:
                 TokenKind::Operator(Operator {
@@ -376,21 +348,13 @@ impl<'a> Parser<'a> {
             ..
         }) = self.tokens.current()
         {
-            Some(Box::new(self.parse_generic()))
+            self.parse_generic()
         } else {
             None
         };
 
-        let identifier = check!(
-            self.errors,
-            self.expect(TokenKind::Ident(String::from("")), line!()),
-            ParseNode
-        );
-        let left = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBrace, line!()),
-            ParseNode
-        );
+        let identifier = pexpect!(self, TokenKind::Ident(String::from("")));
+        let left = pexpect!(self, TokenKind::OpenBrace);
         let mut statements = vec![];
 
         while let Some(_) = self.tokens.current() {
@@ -401,48 +365,48 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
+
             statements.push(self.parse_spec_statement());
         }
 
-        let right = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBrace, line!()),
-            ParseNode
-        );
-        check!(ParseNode::SpecDecleration(SpecDecleration {
+        let right = pexpect!(self, TokenKind::CloseBrace);
+
+        let statements = ptry!(statements.into_iter().map(|f| f).collect::<Option<_>>());
+
+        Some(ParseNode::SpecDecleration(SpecDecleration {
             spec_keyword: keyword.range,
             identifier: identifier.clone(),
-            generic,
+            generic: generic.map(|f| Box::new(f)),
             body: statements,
             range: (keyword.range.0, right.range.1),
         }))
     }
 
-    fn parse_spec_statement(&mut self) -> SpecBody {
+    fn parse_spec_statement(&mut self) -> Option<SpecBody> {
         match self.tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::Ident(_) => {
                     self.tokens.move_next();
-                    check!(SpecBody::Function(
+                    Some(SpecBody::Function(
                         (*t).clone(),
-                        self.parse_function_type(None),
+                        ptry!(self.parse_function_type(None)),
                     ))
                 }
-                _ => Err(ParseError::new(&format!(
-                    "Unexpected token {:?} found in action statement!",
-                    t
-                ))),
+                _ => {
+                    return self.add_error(ParseError::new(&format!(
+                        "Unexpected token {:?} found in action statement!",
+                        t
+                    )))
+                }
             },
-            None => Err(ParseError::new(&format!("Unkown field in spec statement!"))),
+            None => {
+                return self.add_error(ParseError::new(&format!("Unkown field in spec statement!")))
+            }
         }
     }
 
-    fn parse_function_call(&mut self, to_be_called: Expression) -> Expression {
-        let op = check!(
-            self.errors,
-            self.expect(TokenKind::OpenParen, line!()),
-            Expression
-        );
+    fn parse_function_call(&mut self, to_be_called: Option<Expression>) -> Option<Expression> {
+        let op = pexpect!(self, TokenKind::OpenParen);
         let mut args = vec![];
         while let Some(_) = self.tokens.current() {
             if let Some(Token {
@@ -452,7 +416,9 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
+
             args.push(self.parse_expression(0));
+
             match self.tokens.current() {
                 Some(t) => match t.token_type {
                     TokenKind::Comma => self.tokens.move_next(),
@@ -460,29 +426,28 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     _ => {
-                        self.add_error(ParseError::new(&format!(
+                        return self.add_error(ParseError::new(&format!(
                             "Expected comma or closing parenthesis!"
-                        )));
-                        return Expression::Empty;
+                        )))
                     }
                 },
-                None => {
-                    self.add_error(ParseError::new(&format!("Expected token!")));
-                    return Expression::Empty;
-                }
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
-        let cp = check!(
-            self.errors,
-            self.expect(TokenKind::CloseParen, line!()),
-            Expression
-        );
+
+        let cp = pexpect!(self, TokenKind::CloseParen);
+
+        let to_be_called = ptry!(to_be_called);
+
         let start = to_be_called.get_range().0;
         let (to_be_called, generic) = if let Expression::Generic(ident, args, _) = to_be_called {
             (*ident, Some(args))
         } else {
             (to_be_called, None)
         };
+
+        let args = ptry!(args.into_iter().map(|f| f).collect::<Option<_>>());
+
         let fc = FunctionCall {
             expression_to_call: Box::new(to_be_called),
             arguments: args,
@@ -490,15 +455,11 @@ impl<'a> Parser<'a> {
             generic,
             range: (start, cp.range.1),
         };
-        Expression::FunctionCall(fc)
+        Some(Expression::FunctionCall(fc))
     }
 
-    fn parse_function(&mut self) -> ParseNode {
-        let ident_token = check!(
-            self.errors,
-            self.expect(TokenKind::Ident("".to_string()), line!()),
-            ParseNode
-        );
+    fn parse_function(&mut self) -> Option<ParseNode> {
+        let ident_token = pexpect!(self, TokenKind::Ident("".to_string()));
         let generic = if let Some(Token {
             token_type:
                 TokenKind::Operator(Operator {
@@ -508,16 +469,23 @@ impl<'a> Parser<'a> {
             ..
         }) = self.tokens.current()
         {
-            Some(Box::new(self.parse_generic()))
+            if let Some(gen) = self.parse_generic() {
+                Some(Box::new(gen))
+            } else {
+                None
+            }
         } else {
             None
         };
 
         let fn_type = self.parse_function_type(None);
-        let body = self.parse_statement();
+        let body = ptry!(self.parse_statement());
 
         let end = body.get_range().1;
 
+        let Some(fn_type) = fn_type else {
+            return None;
+        };
         let fd = FunctionDecleration {
             identifier: ident_token.clone(),
             function_type: fn_type,
@@ -526,13 +494,13 @@ impl<'a> Parser<'a> {
             range: (ident_token.range.0, end),
         };
 
-        check!(ParseNode::FunctionDecleration(fd))
+        Some(ParseNode::FunctionDecleration(fd))
     }
 
     fn parse_function_type(
         &mut self,
         first: Option<(&Token, &Token)>,
-    ) -> Result<FunctionSignature, ParseError> {
+    ) -> Option<FunctionSignature> {
         let mut params = vec![];
 
         let op = match first {
@@ -543,19 +511,15 @@ impl<'a> Parser<'a> {
                         symbol: prm.clone(),
                     })
                 } else if Keyword::create_expect(KeywordKind::Const) == prm.token_type {
-                    let _ = self.expect(Keyword::create_expect(KeywordKind::SELF), line!())?;
+                    pexpect!(self, Keyword::create_expect(KeywordKind::SELF));
 
                     params.push(TypeSymbol {
                         symbol_type: Type::ConstSelf,
                         symbol: prm.clone(),
                     })
                 } else {
-                    check!(
-                        self.errors,
-                        self.expect(TokenKind::Colon, line!()),
-                        ParseNode
-                    );
-                    let parameter_type = self.parse_type();
+                    pexpect!(self, TokenKind::Colon);
+                    let parameter_type = ptry!(self.parse_type());
                     let ts = TypeSymbol {
                         symbol_type: parameter_type,
                         symbol: prm.clone(),
@@ -567,21 +531,19 @@ impl<'a> Parser<'a> {
                             TokenKind::Comma => self.tokens.move_next(),
                             TokenKind::CloseParen => (),
                             _ => {
-                                return Err(ParseError::new(&format!(
+                                return self.add_error(ParseError::new(&format!(
                                     "Expected comma or closing parenthesis!"
                                 )))
                             }
                         },
-                        None => return Err(ParseError::new(&format!("Expected token!"))),
+                        None => {
+                            return self.add_error(ParseError::new(&format!("Expected token!")))
+                        }
                     };
                 }
                 op
             }
-            None => check!(
-                self.errors,
-                self.expect(TokenKind::OpenParen, line!()),
-                ParseNode
-            ),
+            None => pexpect!(self, TokenKind::OpenParen),
         };
 
         if let Some(
@@ -612,11 +574,7 @@ impl<'a> Parser<'a> {
         ) = self.tokens.current()
         {
             self.tokens.move_next();
-            let otok = check!(
-                self.errors,
-                self.expect(Keyword::create_expect(KeywordKind::SELF), line!()),
-                ParseNode
-            );
+            let otok = pexpect!(self, Keyword::create_expect(KeywordKind::SELF));
             params.push(TypeSymbol {
                 symbol_type: Type::ConstSelf,
                 symbol: otok.clone(),
@@ -631,17 +589,9 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
-            let identifier = check!(
-                self.errors,
-                self.expect(TokenKind::Ident("".to_string()), line!()),
-                ParseNode
-            );
-            check!(
-                self.errors,
-                self.expect(TokenKind::Colon, line!()),
-                ParseNode
-            );
-            let parameter_type = self.parse_type();
+            let identifier = pexpect!(self, TokenKind::Ident("".to_string()));
+            pexpect!(self, TokenKind::Colon);
+            let parameter_type = ptry!(self.parse_type());
 
             let ts = TypeSymbol {
                 symbol_type: parameter_type,
@@ -656,20 +606,16 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     _ => {
-                        return Err(ParseError::new(&format!(
+                        return self.add_error(ParseError::new(&format!(
                             "Expected comma or closing parenthesis!"
                         )))
                     }
                 },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
 
-        let cp = check!(
-            self.errors,
-            self.expect(TokenKind::CloseParen, line!()),
-            ParseNode
-        );
+        let cp = pexpect!(self, TokenKind::CloseParen);
 
         let ret_type = if let Some(Token {
             token_type: TokenKind::Colon,
@@ -677,19 +623,15 @@ impl<'a> Parser<'a> {
         }) = self.tokens.current()
         {
             self.tokens.move_next();
-            self.parse_type()
+            ptry!(self.parse_type())
         } else {
             Type::Unit
         };
 
-        let _arrow = check!(
-            self.errors,
-            self.expect(Operator::create_expect(OperatorKind::Arrow), line!()),
-            ParseNode
-        );
+        let _arrow = pexpect!(self, Operator::create_expect(OperatorKind::Arrow));
 
         let end = ret_type.get_range().1;
-        check!(FunctionSignature {
+        Some(FunctionSignature {
             parameters: params,
             return_type: Box::new(ret_type),
             parens: (op.range.0, cp.range.1),
@@ -697,13 +639,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_block_statement_expr(&mut self) -> Expression {
-        let op = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBrace, line!()),
-            ParseNode
-        );
+    fn parse_block_statement_expr(&mut self) -> Option<Expression> {
+        let op = pexpect!(self, TokenKind::OpenBrace);
         let mut statements = vec![];
+        let mut last_index = 0;
         while let Some(_) = self.tokens.current() {
             if let Some(Token {
                 token_type: TokenKind::CloseBrace,
@@ -715,6 +654,12 @@ impl<'a> Parser<'a> {
 
             statements.push(self.parse_statement());
 
+            let index = self.tokens.index().unwrap();
+            if index == last_index {
+                self.tokens.move_next();
+            }
+
+            last_index = index;
             match self.tokens.current() {
                 Some(t) => match t.token_type {
                     TokenKind::CloseBrace => {
@@ -722,24 +667,23 @@ impl<'a> Parser<'a> {
                     }
                     _ => (),
                 },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
-        let cp = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBrace, line!()),
-            ParseNode
-        );
-        check!(Expression::Block(statements, (op.range.0, cp.range.1)))
+        let cp = pexpect!(self, TokenKind::CloseBrace);
+
+        let statements = ptry!(statements.into_iter().map(|f| f).collect::<Option<_>>());
+
+        Some(Expression::Block(statements, (op.range.0, cp.range.1)))
     }
 
-    fn parse_block_statement(&mut self) -> ParseNode {
-        let expr = self.parse_block_statement_expr();
+    fn parse_block_statement(&mut self) -> Option<ParseNode> {
+        let expr = ptry!(self.parse_block_statement_expr());
         let rng = expr.get_range();
-        check!(ParseNode::Expression(expr, rng))
+        Some(ParseNode::Expression(expr, rng))
     }
 
-    fn parse_operator_expression(&mut self, prev_prec: u8) -> Expression {
+    fn parse_operator_expression(&mut self, prev_prec: u8) -> Option<Expression> {
         let mut left = if let Some(Token {
             token_type: TokenKind::Operator(o),
             ..
@@ -748,14 +692,14 @@ impl<'a> Parser<'a> {
             let uprec = Parser::unary_precedence(*o);
             if uprec != 0 && uprec >= prev_prec {
                 self.tokens.move_next();
-                let right = self.parse_expression(uprec);
+                let right = ptry!(self.parse_expression(uprec));
 
                 let end = right.get_range().1;
-                Expression::UnaryExpression(UnaryExpression {
+                Some(Expression::UnaryExpression(UnaryExpression {
                     expression: Box::new(right),
                     operator: o.operator,
                     range: (o.range.0, end),
-                })
+                }))
             } else {
                 self.parse_expression(0)
             }
@@ -764,7 +708,7 @@ impl<'a> Parser<'a> {
         };
 
         while let Some(t) = self.tokens.current() {
-            match t {
+            left = match t {
                 Token {
                     token_type: TokenKind::Operator(o),
                     ..
@@ -776,19 +720,26 @@ impl<'a> Parser<'a> {
                     self.tokens.move_next();
 
                     let right = self.parse_expression(prec);
+
+                    let (lleft, right) = if let (Some(left), Some(right)) = (left, right) {
+                        (left, right)
+                    } else {
+                        return None;
+                    };
+
                     let right = if let (OperatorKind::Dot, Expression::Generic(tok, prms, rng)) =
                         (o.operator, &right)
                     {
                         let right = &*tok;
-                        let start = left.get_range().0;
+                        let start = lleft.get_range().0;
                         let end = right.get_range().1;
                         let be = BinaryExpression {
-                            left: Box::new(left),
+                            left: Box::new(lleft),
                             operator: o.operator,
                             right: right.clone(),
                             range: (start, end),
                         };
-                        left = check!(Expression::Generic(
+                        left = Some(Expression::Generic(
                             Box::new(Expression::BinaryExpression(be)),
                             prms.clone(),
                             rng.clone(),
@@ -798,15 +749,15 @@ impl<'a> Parser<'a> {
                     } else {
                         right
                     };
-                    let start = left.get_range().0;
+                    let start = lleft.get_range().0;
                     let end = right.get_range().1;
                     let be = BinaryExpression {
-                        left: Box::new(left),
+                        left: Box::new(lleft),
                         operator: o.operator,
                         right: Box::new(right),
                         range: (start, end),
                     };
-                    left = check!(Expression::BinaryExpression(be));
+                    Some(Expression::BinaryExpression(be))
                 }
                 token => {
                     let token_type = &token.token_type;
@@ -815,34 +766,33 @@ impl<'a> Parser<'a> {
                         break;
                     }
 
-                    let lleft = left;
+                    // let Some(left) = left else {
+                    //     continue;
+                    // };
+
                     match token_type {
-                        TokenKind::OpenParen => return self.parse_function_call(lleft),
+                        TokenKind::OpenParen => return self.parse_function_call(left),
                         TokenKind::Operator(Operator {
                             operator: OperatorKind::Lt,
                             ..
-                        }) => return self.parse_function_call(lleft),
+                        }) => return self.parse_function_call(left),
                         TokenKind::OpenBracket => {
-                            let ob = check!(
-                                self.errors,
-                                self.expect(TokenKind::OpenBracket, line!()),
-                                ParseNode
-                            );
+                            let ob = pexpect!(self, TokenKind::OpenBracket);
                             let value = self.parse_expression(0);
-                            let cb = check!(
-                                self.errors,
-                                self.expect(TokenKind::CloseBracket, line!()),
-                                ParseNode
-                            );
-                            let idx = IndexExpression {
-                                index_expression: Box::new(lleft),
-                                index_value: Box::new(value),
-                                square_range: (ob.range.0, cb.range.1),
-                            };
+                            let cb = pexpect!(self, TokenKind::CloseBracket);
 
-                            left = check!(Expression::Index(idx));
+                            if let (Some(value), Some(left)) = (value, left) {
+                                let idx = IndexExpression {
+                                    index_expression: Box::new(left),
+                                    index_value: Box::new(value),
+                                    square_range: (ob.range.0, cb.range.1),
+                                };
+                                Some(Expression::Index(idx))
+                            } else {
+                                None
+                            }
                         }
-                        _ => return check!(lleft),
+                        _ => return left,
                     }
                 }
             }
@@ -853,19 +803,22 @@ impl<'a> Parser<'a> {
                 token_type: TokenKind::Colon,
                 ..
             }),
-            Expression::Identifier(t),
-        ) = (self.tokens.peek_next(), &left)
+            Some(Expression::Identifier(t)),
+        ) = (self.tokens.current(), &left)
         {
-            check!(Expression::Lambda(
-                self.parse_function_type(Some((self.tokens.current().unwrap(), &t))),
-                Box::new(self.parse_statement()),
-            ))
+            let ty = self.parse_function_type(Some((self.tokens.current().unwrap(), &t)));
+            let st = self.parse_statement();
+            if let (Some(ty), Some(st)) = (ty, st) {
+                Some(Expression::Lambda(ty, Box::new(st)))
+            } else {
+                None
+            }
         } else {
-            check!(left)
+            left
         }
     }
 
-    fn parse_expression(&mut self, prev_prec: u8) -> Expression {
+    fn parse_expression(&mut self, prev_prec: u8) -> Option<Expression> {
         match self.tokens.current() {
             Some(t) => match t.token_type {
                 TokenKind::OpenBrace => self.parse_block_statement_expr(),
@@ -911,7 +864,12 @@ impl<'a> Parser<'a> {
                             let condition = self.parse_expression(0);
                             let body = self.parse_block_statement();
 
+                            let (Some(body), Some(condition)) = (body, condition) else {
+                                continue;
+                            };
+
                             let end = body.get_range().1;
+
                             clauses.push(IfExpression {
                                 if_token: (erange.0, irange.1),
                                 condition: Box::new(condition),
@@ -932,7 +890,11 @@ impl<'a> Parser<'a> {
                         {
                             let tok = self.tokens.current().unwrap();
                             self.tokens.move_next();
-                            Some((tok.range, self.parse_block_statement()))
+                            if let Some(body) = self.parse_block_statement() {
+                                Some((tok.range, body))
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -973,8 +935,11 @@ impl<'a> Parser<'a> {
                         None
                     };
 
+                    let (Some(body), Some(condition)) = (body, condition) else {
+                                return None;
+                            };
                     let end = else_clause.as_ref().map_or(body.get_range().1, |f| f.0 .1);
-                    check!(Expression::IfExpression(IfExpression {
+                    Some(Expression::IfExpression(IfExpression {
                         if_token: t.range,
                         condition: Box::new(condition),
                         body: Box::new(body),
@@ -992,9 +957,9 @@ impl<'a> Parser<'a> {
                         ..
                     }) = self.tokens.current()
                     {
-                        let body = self.parse_block_statement();
+                        let body = ptry!(self.parse_block_statement());
                         let range = (t.range.0, body.get_range().1);
-                        check!(Expression::LoopExpression(LoopExpression {
+                        Some(Expression::LoopExpression(LoopExpression {
                             keyword: t.range,
                             loop_type: Loop::Infinite(Box::new(body)),
                             range,
@@ -1002,37 +967,35 @@ impl<'a> Parser<'a> {
                     } else {
                         let expression = self.parse_expression(0);
                         let body = self.parse_block_statement();
-                        let range = (t.range.0, body.get_range().1);
-                        check!(Expression::LoopExpression(LoopExpression {
-                            keyword: t.range,
-                            loop_type: Loop::Until(Box::new(expression), Box::new(body)),
+                        if let (Some(expression), Some(body)) = (expression, body) {
+                            let range = (t.range.0, body.get_range().1);
+                            Some(Expression::LoopExpression(LoopExpression {
+                                keyword: t.range,
+                                loop_type: Loop::Until(Box::new(expression), Box::new(body)),
 
-                            range,
-                        }))
+                                range,
+                            }))
+                        } else {
+                            None
+                        }
                     }
                 }
                 _ => self.parse_operator_expression(prev_prec),
             },
-            None => Err(ParseError::new(&String::from(
-                "Expected some token in expression!",
-            ))),
+            None => {
+                return self.add_error(ParseError::new(&String::from(
+                    "Expected some token in expression!",
+                )))
+            }
         }
     }
 
-    fn parse_variable_decleration(&mut self, cons: bool) -> ParseNode {
+    fn parse_variable_decleration(&mut self, cons: bool) -> Option<ParseNode> {
         let keyword = match self.expect(Keyword::create_expect(KeywordKind::Let), line!()) {
             Ok(t) => t,
-            Err(_) => check!(
-                self.errors,
-                self.expect(Keyword::create_expect(KeywordKind::Const), line!()),
-                ParseNode
-            ),
+            Err(_) => pexpect!(self, Keyword::create_expect(KeywordKind::Const)),
         };
-        let identifier = check!(
-            self.errors,
-            self.expect(TokenKind::Ident("".to_string()), line!()),
-            ParseNode
-        );
+        let identifier = pexpect!(self, TokenKind::Ident("".to_string()));
 
         let var_type = match self.tokens.current() {
             Some(Token {
@@ -1040,8 +1003,9 @@ impl<'a> Parser<'a> {
                 ..
             }) => {
                 self.tokens.move_next();
-                let _type = self.parse_type();
-                Some(Box::new(_type))
+                let ptype = self.parse_type();
+
+                ptype.map(|f| Box::new(f))
             }
             _ => None,
         };
@@ -1057,18 +1021,19 @@ impl<'a> Parser<'a> {
             }) => {
                 let tok = self.tokens.current().unwrap();
                 self.tokens.move_next();
-                Some((Box::new(self.parse_expression(0)), tok.range))
+                let pexpr = self.parse_expression(0);
+
+                pexpr.map(|f| (Box::new(f), tok.range))
             }
             _ => None,
         };
-
-        // check!(self.errors, self.expect( TokenKind::Semi, line!()), ParseNode);
 
         let end = match &var_initializer {
             Some(s) => s.1,
             None => identifier.range,
         };
         let start = keyword.range.0;
+
         let vd = VariableDecleration {
             variable_type: var_type,
             possible_initializer: var_initializer,
@@ -1076,32 +1041,24 @@ impl<'a> Parser<'a> {
             is_const: cons,
             range: (start, end.1),
         };
-        check!(ParseNode::VariableDecleration(vd))
+
+        Some(ParseNode::VariableDecleration(vd))
     }
 
-    fn parse_tag(&mut self) -> ParseNode {
-        let left = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBracket, line!()),
-            ParseNode
-        );
+    fn parse_tag(&mut self) -> Option<ParseNode> {
+        let left = pexpect!(self, TokenKind::OpenBracket);
         let expression = self.parse_expression(0);
-        let right = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBracket, line!()),
-            ParseNode
-        );
-        check!(ParseNode::Tag(expression, (left.range.0, right.range.1)))
+        let right = pexpect!(self, TokenKind::CloseBracket);
+
+        expression.map(|f| ParseNode::Tag(f, (left.range.0, right.range.1)))
     }
 
-    fn parse_import(&mut self) -> ParseNode {
-        let keyword = check!(
-            self.errors,
-            self.expect(Keyword::create_expect(KeywordKind::Import), line!()),
-            ParseNode
-        );
+    fn parse_import(&mut self) -> Option<ParseNode> {
+        let keyword = pexpect!(self, Keyword::create_expect(KeywordKind::Import));
+
         let mut modules = vec![];
-        let thing = self.parse_expression(0);
+        let thing = ptry!(self.parse_expression(0));
+
         fn add_wild(modules: &mut Vec<Expression>, node: &Expression) {
             match node {
                 Expression::BinaryExpression(BinaryExpression { left, right, .. }) => {
@@ -1114,21 +1071,23 @@ impl<'a> Parser<'a> {
                 _ => (),
             }
         }
+
         add_wild(&mut modules, &thing);
         let end = match modules.last() {
             Some(m) => m.get_range().1,
             None => keyword.range.1,
         };
+
         let id = ImportDecleration {
             import_keyword: keyword.range,
             path: modules,
             range: (keyword.range.0, end),
         };
 
-        check!(ParseNode::Import(id))
+        Some(ParseNode::Import(id))
     }
 
-    fn parse_primary(&mut self) -> Expression {
+    fn parse_primary(&mut self) -> Option<Expression> {
         match self.tokens.current() {
             Some(t) => match t {
                 Token {
@@ -1136,28 +1095,31 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.tokens.move_next();
-                    match self.tokens.peek_next() {
+                    match self.tokens.current() {
                         Some(Token {
                             token_type: TokenKind::CloseParen,
                             ..
                         }) => {
                             self.tokens.move_prev();
-                            check!(Expression::Lambda(
-                                self.parse_function_type(None),
-                                Box::new(self.parse_statement()),
-                            ))
+                            let ty = self.parse_function_type(None);
+                            let st = self.parse_statement();
+                            let (Some(ty), Some(st)) = (ty, st) else {
+                                    return None;
+                                };
+
+                            Some(Expression::Lambda(ty, Box::new(st)))
                         }
                         _ => {
                             let expr = self.parse_expression(0);
                             match expr {
-                                Expression::Lambda(l, b) => check!(Expression::Lambda(l, b)),
-                                _ => {
-                                    check!(
-                                        self.errors,
-                                        self.expect(TokenKind::CloseParen, line!()),
-                                        ParseNode
-                                    );
-                                    check!(expr)
+                                Some(Expression::Lambda(l, b)) => Some(Expression::Lambda(l, b)),
+                                Some(e) => {
+                                    pexpect!(self, TokenKind::CloseParen);
+                                    Some(e)
+                                }
+                                None => {
+                                    pexpect!(self, TokenKind::CloseParen);
+                                    None
                                 }
                             }
                         }
@@ -1169,12 +1131,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_generic(&mut self) -> ParseNode {
-        let start = check!(
-            self.errors,
-            self.expect(Operator::create_expect(OperatorKind::Lt), line!()),
-            ParseNode
-        );
+    fn parse_generic(&mut self) -> Option<ParseNode> {
+        let start = pexpect!(self, Operator::create_expect(OperatorKind::Lt));
         // let gt = Operator::create_expect(OperatorKind::Gt);
         let mut generic_params = vec![];
         while let Some(_) = self.tokens.current() {
@@ -1190,11 +1148,7 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let type_param = check!(
-                self.errors,
-                self.expect(TokenKind::Ident("".to_string()), line!()),
-                ParseNode
-            );
+            let type_param = pexpect!(self, TokenKind::Ident("".to_string()));
 
             let specialization = if let Some(Token {
                 token_type:
@@ -1205,13 +1159,9 @@ impl<'a> Parser<'a> {
                 ..
             }) = self.tokens.current()
             {
-                let as_tok = check!(
-                    self.errors,
-                    self.expect(Operator::create_expect(OperatorKind::As), line!()),
-                    ParseNode
-                );
+                let as_tok = pexpect!(self, Operator::create_expect(OperatorKind::As));
                 let ty = self.parse_type();
-                Some(ty)
+                ty
             } else {
                 None
             };
@@ -1221,7 +1171,7 @@ impl<'a> Parser<'a> {
                 ..
             }) = self.tokens.current()
             {
-                Some(self.parse_generic_constraints())
+                self.parse_generic_constraints()
             } else {
                 None
             };
@@ -1241,28 +1191,19 @@ impl<'a> Parser<'a> {
                     _ => (),
                 },
                 None => {
-                    self.add_error(ParseError::new(&format!("Expected token!")));
-                    return ParseNode::Empty;
+                    return self.add_error(ParseError::new(&format!("Expected token!")));
                 }
             };
         }
-        let end = check!(
-            self.errors,
-            self.expect(Operator::create_expect(OperatorKind::Gt), line!()),
-            ParseNode
-        );
-        check!(ParseNode::GenericParameters(GenericParameters {
+        let end = pexpect!(self, Operator::create_expect(OperatorKind::Gt));
+        Some(ParseNode::GenericParameters(GenericParameters {
             parameters: generic_params,
             range: (start.range.0, end.range.1),
         }))
     }
 
-    fn parse_generic_constraints(&mut self) -> Vec<Type> {
-        check!(
-            self.errors,
-            self.expect(TokenKind::Colon, line!()),
-            ParseNode
-        );
+    fn parse_generic_constraints(&mut self) -> Option<Vec<Type>> {
+        pexpect!(self, TokenKind::Colon);
         let mut constraints = vec![];
         while let Some(_) = self.tokens.current() {
             if let Some(Token {
@@ -1295,13 +1236,16 @@ impl<'a> Parser<'a> {
                     | TokenKind::Comma => break,
                     _ => (),
                 },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
-        check!(constraints)
+
+        let constraints = ptry!(constraints.into_iter().map(|f| f).collect::<Option<_>>());
+
+        Some(constraints)
     }
 
-    fn parse_literal(&mut self) -> Expression {
+    fn parse_literal(&mut self) -> Option<Expression> {
         match self.tokens.current() {
             Some(t) => match t {
                 Token {
@@ -1309,7 +1253,7 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.tokens.move_next();
-                    check!(Expression::Literal(a.clone()))
+                    Some(Expression::Literal(a.clone()))
                 }
                 Token {
                     token_type: TokenKind::OpenBracket,
@@ -1330,28 +1274,28 @@ impl<'a> Parser<'a> {
                 } => match k.keyword {
                     KeywordKind::True => {
                         self.tokens.move_next();
-                        check!(Expression::Literal(Literal::Boolean(true, t.range)))
+                        Some(Expression::Literal(Literal::Boolean(true, t.range)))
                     }
                     KeywordKind::False => {
                         self.tokens.move_next();
-                        check!(Expression::Literal(Literal::Boolean(false, t.range)))
+                        Some(Expression::Literal(Literal::Boolean(false, t.range)))
                     }
                     KeywordKind::SELF => {
                         self.tokens.move_next();
-                        check!(Expression::Literal(Literal::SELF(t.range)))
+                        Some(Expression::Literal(Literal::SELF(t.range)))
                     }
-                    _ => Err(ParseError::new(&format!(
+                    _ => self.add_error(ParseError::new(&format!(
                         "Keyword {:?} is not a valid literal!",
                         k
                     ))),
                 },
-                _ => Err(ParseError::new(&"Unkown literal value!".to_string())),
+                _ => self.add_error(ParseError::new(&"Unkown literal value!".to_string())),
             },
-            None => Err(ParseError::new(&"Unkown literal value!".to_string())),
+            None => self.add_error(ParseError::new(&"Unkown literal value!".to_string())),
         }
     }
 
-    fn parse_ident(&mut self) -> Expression {
+    fn parse_ident(&mut self) -> Option<Expression> {
         let index = self.tokens.index();
         let possible_type = self.parse_type();
 
@@ -1360,48 +1304,34 @@ impl<'a> Parser<'a> {
             ..
         }) = self.tokens.current()
         {
-            if let Type::Empty = possible_type {
-                self.add_error(ParseError::new(&format!("Type expected")));
-                return Expression::Empty;
+            if let Some(ty) = possible_type {
+                self.parse_template_initializer(Some(Box::new(ty)))
             } else {
-                self.parse_template_initializer(Some(Box::new(possible_type)))
+                self.add_error(ParseError::new(&format!("Type expected")))
             }
         } else {
             match possible_type {
-                Type::NamedType(t) => match t.token_type {
-                    TokenKind::Ident(_) => Expression::Identifier(t),
+                Some(Type::NamedType(t)) => match t.token_type {
+                    TokenKind::Ident(_) => Some(Expression::Identifier(t)),
                     _ => {
-                        self.add_error(ParseError::new(&format!("Unexpected type in expression!")));
-                        return Expression::Empty;
+                        self.add_error(ParseError::new(&format!("Unexpected type in expression!")))
                     }
                 },
-                Type::GenericType(ty) => ty.to_expr_generic(),
-
+                Some(Type::GenericType(ty)) => Some(ty.to_expr_generic()),
                 _ => {
-                    // if let (Some(ind1), Some(ind2)) = (index, self.tokens.index()){
-                    //     let diff = ind2 - ind1;
-                    //     for _ in 0..diff {
-                    //         self.tokens.move_prev();
-                    //     }
-                    // }
                     if let Some(ident) = self.tokens.current() {
                         self.tokens.move_next();
-                        Expression::Identifier((*ident).clone())
+                        Some(Expression::Identifier((*ident).clone()))
                     } else {
-                        self.add_error(ParseError::new(&format!("Expected identifer")));
-                        return Expression::Empty;
+                        self.add_error(ParseError::new(&format!("Expected identifer")))
                     }
                 }
             }
         }
     }
 
-    fn parse_template_initializer(&mut self, named_type: Option<Box<Type>>) -> Expression {
-        let ob = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBrace, line!()),
-            ParseNode
-        );
+    fn parse_template_initializer(&mut self, named_type: Option<Box<Type>>) -> Option<Expression> {
+        let ob = pexpect!(self, TokenKind::OpenBrace);
         let mut key_values = vec![];
 
         while let Some(_) = self.tokens.current() {
@@ -1412,11 +1342,7 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
-            let key = check!(
-                self.errors,
-                self.expect(TokenKind::Ident("".to_string()), line!()),
-                ParseNode
-            );
+            let key = pexpect!(self, TokenKind::Ident("".to_string()));
             let key_string = match &key.token_type {
                 TokenKind::Ident(s) => s.clone(),
                 _ => panic!("Shouldn't be here!"),
@@ -1429,9 +1355,10 @@ impl<'a> Parser<'a> {
                 self.tokens.move_next();
                 self.parse_expression(0)
             } else {
-                Expression::Identifier(key.clone())
+                Some(Expression::Identifier(key.clone()))
             };
-            key_values.push((key_string, value));
+
+            key_values.push(value.map(|f| (key_string, f)));
 
             match self.tokens.current() {
                 Some(t) => match t.token_type {
@@ -1440,36 +1367,30 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     _ => {
-                        return Err(ParseError::new(&format!(
+                        return self.add_error(ParseError::new(&format!(
                             "Expected comma or closing brace!"
                         )))
                     }
                 },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
 
-        let cb = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBrace, line!()),
-            ParseNode
-        );
+        let cb = pexpect!(self, TokenKind::CloseBrace);
         let start = named_type.as_ref().map_or(ob.range.0, |f| f.get_range().0);
+
+        let key_values = ptry!(key_values.into_iter().map(|f| f).collect::<Option<_>>());
 
         let si = TemplateInitializer {
             named_type,
             initializer_values: key_values,
             range: (start, cb.range.1),
         };
-        check!(Expression::Literal(Literal::StructInitializer(si)))
+        Some(Expression::Literal(Literal::StructInitializer(si)))
     }
 
-    fn parse_array_literal(&mut self) -> Expression {
-        let ob = check!(
-            self.errors,
-            self.expect(TokenKind::OpenBracket, line!()),
-            ParseNode
-        );
+    fn parse_array_literal(&mut self) -> Option<Expression> {
+        let ob = pexpect!(self, TokenKind::OpenBracket);
         let mut values = vec![];
         while let Some(_) = self.tokens.current() {
             if let Some(Token {
@@ -1479,8 +1400,12 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
+
             let value = self.parse_expression(0);
-            values.push(value);
+            if let Some(value) = value {
+                values.push(value);
+            }
+
             match self.tokens.current() {
                 Some(t) => match t.token_type {
                     TokenKind::Comma => self.tokens.move_next(),
@@ -1488,63 +1413,59 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     _ => {
-                        return Err(ParseError::new(&format!(
+                        return self.add_error(ParseError::new(&format!(
                             "Expected comma or closing bracket!"
                         )))
                     }
                 },
-                None => return Err(ParseError::new(&format!("Expected token!"))),
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
             };
         }
-        let cb = check!(
-            self.errors,
-            self.expect(TokenKind::CloseBracket, line!()),
-            ParseNode
-        );
+        let cb = pexpect!(self, TokenKind::CloseBracket);
         let ai = ArrayInitializer {
             elements: values,
             range: (ob.range.0, cb.range.1),
         };
 
-        check!(Expression::Literal(Literal::Array(ai)))
+        Some(Expression::Literal(Literal::Array(ai)))
     }
 
-    fn parse_type(&mut self) -> Type {
+    fn parse_type(&mut self) -> Option<Type> {
         match self.tokens.current() {
             Some(t) => {
                 let result = match t.token_type {
                     TokenKind::Ident(_) => {
                         let token = (*t).clone();
                         self.tokens.move_next();
-                        check!(Type::NamedType(token))
+                        Some(Type::NamedType(token))
                     }
                     TokenKind::Keyword(k) => {
                         self.tokens.move_next();
                         match k.keyword {
-                            KeywordKind::Int => check!(Type::Int(32, t.range)),
-                            KeywordKind::Int8 => check!(Type::Int(8, t.range)),
-                            KeywordKind::Int16 => check!(Type::Int(16, t.range)),
-                            KeywordKind::Int32 => check!(Type::Int(32, t.range)),
-                            KeywordKind::Int64 => check!(Type::Int(64, t.range)),
-                            KeywordKind::Int128 => check!(Type::Int(128, t.range)),
-                            KeywordKind::Uint => check!(Type::Uint(32, t.range)),
-                            KeywordKind::Uint8 => check!(Type::Uint(8, t.range)),
-                            KeywordKind::Uint16 => check!(Type::Uint(16, t.range)),
-                            KeywordKind::Uint32 => check!(Type::Uint(32, t.range)),
-                            KeywordKind::Uint64 => check!(Type::Uint(64, t.range)),
-                            KeywordKind::Uint128 => check!(Type::Uint(128, t.range)),
-                            KeywordKind::Bool => check!(Type::Bool(t.range)),
-                            KeywordKind::Char => check!(Type::Char(t.range)),
-                            KeywordKind::Float => check!(Type::Float(32, t.range)),
-                            KeywordKind::Float32 => check!(Type::Float(32, t.range)),
-                            KeywordKind::Float64 => check!(Type::Float(64, t.range)),
-                            _ => Err(ParseError::new(&format!("{:?} is not a valid type!", k))),
+                            KeywordKind::Int => Some(Type::Int(32, t.range)),
+                            KeywordKind::Int8 => Some(Type::Int(8, t.range)),
+                            KeywordKind::Int16 => Some(Type::Int(16, t.range)),
+                            KeywordKind::Int32 => Some(Type::Int(32, t.range)),
+                            KeywordKind::Int64 => Some(Type::Int(64, t.range)),
+                            KeywordKind::Int128 => Some(Type::Int(128, t.range)),
+                            KeywordKind::Uint => Some(Type::Uint(32, t.range)),
+                            KeywordKind::Uint8 => Some(Type::Uint(8, t.range)),
+                            KeywordKind::Uint16 => Some(Type::Uint(16, t.range)),
+                            KeywordKind::Uint32 => Some(Type::Uint(32, t.range)),
+                            KeywordKind::Uint64 => Some(Type::Uint(64, t.range)),
+                            KeywordKind::Uint128 => Some(Type::Uint(128, t.range)),
+                            KeywordKind::Bool => Some(Type::Bool(t.range)),
+                            KeywordKind::Char => Some(Type::Char(t.range)),
+                            KeywordKind::Float => Some(Type::Float(32, t.range)),
+                            KeywordKind::Float32 => Some(Type::Float(32, t.range)),
+                            KeywordKind::Float64 => Some(Type::Float(64, t.range)),
+                            _ => None,
                         }
                     }
                     TokenKind::OpenBracket => {
                         let ob = self.tokens.current().unwrap();
                         self.tokens.move_next();
-                        let array_type = self.parse_type();
+                        let array_type = ptry!(self.parse_type());
                         let size = if let Some(Token {
                             token_type: TokenKind::Colon,
                             ..
@@ -1562,22 +1483,17 @@ impl<'a> Parser<'a> {
                                     ..
                                 }) => *i as usize,
                                 _ => {
-                                    self.add_error(ParseError::new(&format!(
+                                    return self.add_error(ParseError::new(&format!(
                                         "Expected constant integer for array size!"
-                                    )));
-                                    return Type::Empty;
+                                    )))
                                 }
                             };
                             Some((tok.range, numeric_size))
                         } else {
                             None
                         };
-                        let cb = check!(
-                            self.errors,
-                            self.expect(TokenKind::CloseBracket, line!()),
-                            ParseNode
-                        );
-                        check!(Type::ArrayType(ArrayType {
+                        let cb = pexpect!(self, TokenKind::CloseBracket);
+                        Some(Type::ArrayType(ArrayType {
                             base_type: Box::new(array_type),
                             size,
                             range: (ob.range.0, cb.range.1),
@@ -1587,7 +1503,7 @@ impl<'a> Parser<'a> {
                         let op = self.tokens.current().unwrap();
                         self.tokens.move_next();
                         let mut parameters = vec![];
-                        while let Some(_) = self.tokens.peek_next() {
+                        while let Some(_) = self.tokens.current() {
                             if let Some(Token {
                                 token_type: TokenKind::CloseParen,
                                 ..
@@ -1605,19 +1521,18 @@ impl<'a> Parser<'a> {
                                         break;
                                     }
                                     _ => {
-                                        return Err(ParseError::new(&format!(
+                                        return self.add_error(ParseError::new(&format!(
                                             "Expected comma or closing parenthesis!"
                                         )))
                                     }
                                 },
-                                None => return Err(ParseError::new(&format!("Expected token!"))),
+                                None => {
+                                    return self
+                                        .add_error(ParseError::new(&format!("Expected token!")))
+                                }
                             };
                         }
-                        let cp = check!(
-                            self.errors,
-                            self.expect(TokenKind::CloseParen, line!()),
-                            ParseNode
-                        );
+                        let cp = pexpect!(self, TokenKind::CloseParen);
                         let ret_type = if let Some(Token {
                             token_type:
                                 TokenKind::Operator(Operator {
@@ -1628,13 +1543,18 @@ impl<'a> Parser<'a> {
                         }) = self.tokens.current()
                         {
                             self.tokens.move_next();
-                            self.parse_type()
+                            ptry!(self.parse_type())
                         } else {
                             Type::Unit
                         };
                         let end = ret_type.get_range().1;
 
-                        check!(Type::FunctionType(FunctionType {
+                        let parameters = ptry!(parameters
+                            .into_iter()
+                            .map(|f| f)
+                            .collect::<Option<Vec<Type>>>());
+
+                        Some(Type::FunctionType(FunctionType {
                             parameters,
                             return_type: Box::new(ret_type),
                             parens: (op.range.0, cp.range.1),
@@ -1647,16 +1567,19 @@ impl<'a> Parser<'a> {
                     }) => {
                         let tok = self.tokens.current().unwrap();
                         self.tokens.move_next();
-                        let ttype = self.parse_type();
+                        let ttype = ptry!(self.parse_type());
                         let end = ttype.get_range().1;
 
-                        check!(Type::ReferenceType(ReferenceType {
+                        Some(Type::ReferenceType(ReferenceType {
                             base_type: Box::new(ttype),
                             reference: tok.range,
                             range: (tok.range.0, end),
                         }))
                     }
-                    _ => Err(ParseError::new(&format!("{:?} is not a valid type!", t))),
+                    _ => {
+                        return self
+                            .add_error(ParseError::new(&format!("{:?} is not a valid type!", t)))
+                    }
                 };
                 if let Some(Token {
                     token_type:
@@ -1685,14 +1608,13 @@ impl<'a> Parser<'a> {
                         }
 
                         let arg_type = match self.parse_type() {
-                            Type::Empty => {
+                            None => {
                                 for _ in 0..it {
                                     self.tokens.move_prev();
                                 }
                                 return result;
                             }
-
-                            ty => ty,
+                            Some(ty) => ty,
                         };
                         type_arguments.push(arg_type);
 
@@ -1709,20 +1631,22 @@ impl<'a> Parser<'a> {
                                     break;
                                 }
                                 _ => {
-                                    return Err(ParseError::new(&format!(
+                                    return self.add_error(ParseError::new(&format!(
                                         "Expected comma or closing bracket!"
                                     )))
                                 }
                             },
-                            None => return Err(ParseError::new(&format!("Expected token!"))),
+                            None => {
+                                return self.add_error(ParseError::new(&format!("Expected token!")))
+                            }
                         };
                     }
-                    let gt = check!(
-                        self.errors,
-                        self.expect(Operator::create_expect(OperatorKind::Gt), line!()),
-                        ParseNode
-                    );
-                    return check!(Type::GenericType(GenericType {
+                    let gt = pexpect!(self, Operator::create_expect(OperatorKind::Gt));
+
+                    let Some(result) = result else {
+                        return None
+                    };
+                    return Some(Type::GenericType(GenericType {
                         base_type: Box::new(result),
                         arguments: type_arguments,
                         range: (lt.range.0, gt.range.1),
@@ -1731,7 +1655,9 @@ impl<'a> Parser<'a> {
 
                 result
             }
-            None => Err(ParseError::new(&format!("Expected more tokens for type!"))),
+            None => {
+                return self.add_error(ParseError::new(&format!("Expected more tokens for type!")))
+            }
         }
     }
 
@@ -1796,7 +1722,7 @@ impl<'a> Parser<'a> {
                 if std::mem::discriminant(&t.token_type) == std::mem::discriminant(&token_type) =>
             {
                 self.tokens.move_next();
-                check!(t)
+                Ok(t)
             }
             Some(t) => {
                 self.tokens.move_next();

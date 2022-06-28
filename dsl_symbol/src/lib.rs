@@ -13,7 +13,7 @@ use llvm_sys::{
     },
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef},
     target::{LLVMGetModuleDataLayout, LLVMPreferredAlignmentOfType},
-    LLVMBuildAlignedLoad, LLVMGetTypeSize, LLVMGetValueAt, LLVMTypeKind,
+    LLVMBuildAlignedLoad, LLVMCreateGlobalValue, LLVMGetTypeSize, LLVMGetValueAt, LLVMTypeKind,
 };
 
 use bitflags::bitflags;
@@ -358,12 +358,26 @@ impl Value {
                     literal_type: to_type.clone(),
                 });
             }
+            (
+                Value::Literal {
+                    llvm_value,
+                    literal_type: Type::Reference { base_type, .. },
+                },
+                Type::Reference { base_type: rty, .. },
+            ) => {
+                return Value::Literal {
+                    llvm_value: *llvm_value,
+                    literal_type: *base_type.clone(),
+                }
+                .weak_cast(&rty, builder);
+            }
             _ => (),
         }
+
         Err(true)
     }
 
-    pub fn get_ptr(&self) -> Value {
+    pub fn get_ptr(&self, module: LLVMModuleRef) -> Value {
         match self {
             Value::Variable {
                 llvm_value,
@@ -372,6 +386,15 @@ impl Value {
             } => Value::Literal {
                 llvm_value: *llvm_value,
                 literal_type: variable_type.get_ptr(*constant),
+            },
+            Value::Literal {
+                literal_type,
+                llvm_value,
+            } => Value::Literal {
+                llvm_value: unsafe {
+                    LLVMCreateGlobalValue(module, literal_type.get_type(), *llvm_value)
+                },
+                literal_type: literal_type.get_ptr(true),
             },
             _ => panic!(),
         }

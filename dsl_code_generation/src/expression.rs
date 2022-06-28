@@ -12,6 +12,11 @@ use dsl_lexer::OperatorKind;
 use super::module::Module;
 use dsl_symbol::{Symbol, SymbolFlags, SymbolValue, Type, Value};
 
+enum Traversal {
+    Ident(String),
+    Literal(Literal),
+}
+
 impl Module {
     pub(super) fn gen_expression(&self, expression: &Expression) -> Value {
         match expression {
@@ -75,23 +80,42 @@ impl Module {
                                             &self.current_symbol.borrow(),
                                         );
 
-                                        fn trav<'a>(arr: &mut Vec<String>, b: &BinaryExpression) {
+                                        fn trav<'a>(
+                                            arr: &mut Vec<Traversal>,
+                                            b: &BinaryExpression,
+                                        ) {
                                             match (&*b.left, &*b.right, &b.operator) {
                                                 (
                                                     Expression::Identifier(l),
                                                     Expression::Identifier(r),
                                                     OperatorKind::Dot,
                                                 ) => {
-                                                    arr.push(l.as_string().clone());
-                                                    arr.push(r.as_string().clone());
+                                                    arr.push(Traversal::Ident(
+                                                        l.as_string().clone(),
+                                                    ));
+                                                    arr.push(Traversal::Ident(
+                                                        r.as_string().clone(),
+                                                    ));
                                                 }
                                                 (
                                                     Expression::Literal(Literal::SELF(_)),
                                                     Expression::Identifier(r),
                                                     OperatorKind::Dot,
                                                 ) => {
-                                                    arr.push("self".to_string());
-                                                    arr.push(r.as_string().clone());
+                                                    arr.push(Traversal::Ident("self".to_string()));
+                                                    arr.push(Traversal::Ident(
+                                                        r.as_string().clone(),
+                                                    ));
+                                                }
+                                                (
+                                                    Expression::Literal(lit),
+                                                    Expression::Identifier(r),
+                                                    OperatorKind::Dot,
+                                                ) => {
+                                                    arr.push(Traversal::Literal(lit.clone()));
+                                                    arr.push(Traversal::Ident(
+                                                        r.as_string().clone(),
+                                                    ));
                                                 }
                                                 (
                                                     Expression::BinaryExpression(l),
@@ -99,7 +123,9 @@ impl Module {
                                                     OperatorKind::Dot,
                                                 ) => {
                                                     trav(arr, l);
-                                                    arr.push(r.as_string().clone());
+                                                    arr.push(Traversal::Ident(
+                                                        r.as_string().clone(),
+                                                    ));
                                                 }
                                                 _ => (),
                                             }
@@ -118,83 +144,97 @@ impl Module {
 
                                         let root_sym = self.symbol_root.borrow();
 
-                                        let Some(sym) = self.find_up_chain(
-                                            &root_sym,
-                                            &self.current_symbol.borrow(),
-                                            first,
-                                        ) else {
-                                            return Value::Empty
-                                        };
-
-                                        match &sym.value {
-                                            SymbolValue::Variable(
-                                                var @ Value::Variable { variable_type, .. },
-                                            ) => {
-                                                if let Type::Template { path, fields, .. } =
-                                                    variable_type.resolve_base_type()
-                                                {
-                                                    let Some(sym) = self.get_symbol(&root_sym, path) else {
-                                                    return Value::Empty
+                                        let find_syms = |var: &Value| -> Value {
+                                            let path = var.get_type().resolve_path();
+                                            let Some(path) = path else {
+                                                self.add_error("Unable to resolve type in member access expresison! (1)".into());
+                                                return Value::Empty
+                                            };
+                                            let Some(sym) = self.get_symbol(&root_sym, &path) else {
+                                                self.add_error("Unable to resolve type in member access expresison! (2)".into());
+                                                return Value::Empty
+                                            };
+                                            let mut var = var.clone();
+                                            let mut sym = sym;
+                                            // let mut fields = &sym.children;
+                                            for m in citer {
+                                                let Traversal::Ident(m) = m else {
+                                                    self.add_error("Expected field or function name, found literal!".into());
+                                                    return Value::Empty;
                                                 };
-                                                    let mut var = var.clone();
-                                                    let mut sym = sym;
-                                                    let mut fields = fields;
-                                                    for m in citer {
-                                                        if let Some(child) = sym.children.get(m) {
-                                                            match &child.value {
-                                                            SymbolValue::Field(ty) => {
-                                                                let pos = fields
-                                                                    .keys()
-                                                                    .position(|f| f == m);
-                                                                let Some(pos) = pos else {
+                                                if let Some(child) = sym.children.get(m) {
+                                                    match &child.value {
+                                                        SymbolValue::Field(ty) => {
+                                                            let pos = sym
+                                                                .children
+                                                                .keys()
+                                                                .position(|f| f == m);
+                                                            let Some(pos) = pos else {
                                                                     // TODO: errors
                                                                     return Value::Empty;
                                                                 };
-                                                                match ty {
-                                                                    Type::Template {
-                                                                        path,
-                                                                        fields: tf,
-                                                                        ..
-                                                                    } => {
-                                                                        let Some(c) = self.get_symbol(&root_sym, path) else {
+                                                            match ty {
+                                                                Type::Template { path, .. } => {
+                                                                    let Some(c) = self.get_symbol(&root_sym, path) else {
                                                                             return Value::Empty
                                                                         };
-                                                                        sym = c;
-                                                                        fields = tf;
-                                                                    }
-                                                                    _ => (),
+                                                                    sym = c;
                                                                 }
-                                                                var = check!(
-                                                                    self.errors.borrow_mut(),
-                                                                    self.builder.create_struct_gep(
-                                                                        &var,
-                                                                        ty.clone(),
-                                                                        pos.try_into().unwrap(),
-                                                                    ),
-                                                                    Value
-                                                                )
+                                                                _ => (),
                                                             }
-                                                            SymbolValue::Funtion(
-                                                                func @ (Value::Function { .. }
-                                                                | Value::FunctionTemplate {
-                                                                    ..
-                                                                }),
-                                                            ) => {
-                                                                // sym = func;
-                                                                return Value::MemberFunction {
-                                                                    func: Box::new(func.clone()),
-                                                                    var: Box::new(var),
-                                                                };
-                                                            }
+                                                            var = check!(
+                                                                self.errors.borrow_mut(),
+                                                                self.builder.create_struct_gep(
+                                                                    &var,
+                                                                    ty.clone(),
+                                                                    pos.try_into().unwrap(),
+                                                                ),
+                                                                Value
+                                                            )
+                                                        }
+                                                        SymbolValue::Funtion(
+                                                            func @ (Value::Function { .. }
+                                                            | Value::FunctionTemplate {
+                                                                ..
+                                                            }),
+                                                        ) => {
+                                                            return Value::MemberFunction {
+                                                                func: Box::new(func.clone()),
+                                                                var: Box::new(var),
+                                                            };
+                                                        }
 
-                                                            _ => (),
-                                                        }
-                                                        }
+                                                        _ => (),
                                                     }
-                                                    return var;
+                                                }
+                                                return var;
+                                            }
+                                            Value::Empty
+                                        };
+
+                                        match first {
+                                            Traversal::Ident(ident) => {
+                                                let Some(sym) = self.find_up_chain(
+                                                    &root_sym,
+                                                &self.current_symbol.borrow(),
+                                                ident,
+                                                ) else {
+                                                    return Value::Empty
+                                                };
+
+                                                match &sym.value {
+                                                    SymbolValue::Variable(
+                                                        var @ Value::Variable {
+                                                            variable_type, ..
+                                                        },
+                                                    ) => return (find_syms)(var),
+                                                    _ => (),
                                                 }
                                             }
-                                            _ => (),
+                                            Traversal::Literal(lit) => {
+                                                let val = self.gen_literal(lit);
+                                                return (find_syms)(&val);
+                                            }
                                         }
 
                                         return Value::Empty;

@@ -5,11 +5,9 @@ use llvm_sys::core::{
     LLVMInt8Type, LLVMIntType, LLVMPointerType, LLVMVoidType,
 };
 
-use dsl_lexer::{
-    ast::{
-        ArrayInitializer, ArrayType, Expression, FunctionType, GenericType, Literal, ReferenceType,
-        Type,
-    },
+use dsl_lexer::ast::{
+    ArrayInitializer, ArrayType, Expression, FunctionType, GenericType, Literal, ReferenceType,
+    Type,
 };
 
 use super::module::Module;
@@ -98,7 +96,7 @@ impl Module {
                     dsl_symbol::Type::Reference {
                         llvm_type: LLVMPointerType(ty.get_type(), 0),
                         base_type: Box::new(ty),
-                        constant: false
+                        constant: false,
                     }
                 }
             }

@@ -280,7 +280,7 @@ impl Module {
                         Value
                     );
 
-                    let value = check!(self.gen_expression(init.as_ref()));
+                    let value = check!(self.gen_expression(init.as_ref()), Value);
 
                     if let Some(ty) = variable_type {
                         let ty = self.gen_type(ty.as_ref());

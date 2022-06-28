@@ -3,6 +3,8 @@ source_filename = "test.dslUnable to read file!"
 
 %test-Data = type { i32 }
 
+@0 = private unnamed_addr constant i32 8, align 1
+
 declare void @printf(i8*)
 
 define void @core-uint32-inc(i32* %0) {
@@ -24,5 +26,6 @@ define void @test-main(i32 %0) {
   %4 = getelementptr inbounds %test-Data, %test-Data* %3, i32 0, i32 0
   store i32 9, i32* %4, align 4
   call void @test-Data-act(%test-Data* %3)
+  call void @core-uint32-inc(i32* @0)
   ret void
 }
