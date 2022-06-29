@@ -1,15 +1,9 @@
 
-template Data {
-    x: uint32
+template Data<T> {
+    x: T
 }
 
-action uint32 {
-    inc(self) => {
-
-    }
-}
-
-action Data {
+action Data<uint32> {
     act(const self) => {
     }
 }
@@ -18,7 +12,5 @@ main(x: int32) => {
     const data = Data {
         x: 9
     } 
-    data.act()
 
-    (8).inc()
 }

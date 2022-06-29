@@ -254,6 +254,18 @@ impl Module {
                     return Value::Empty;
                 };
 
+                if let Type::TemplateTemplate { path, .. } = &temp {
+                    if let Some(s) = path.last() {
+                        if let CodeGenPass::Symbols = &*self.code_gen_pass.borrow() {
+                            self.add_error(format!(
+                                "Template type `{}` requires a generic argument",
+                                s
+                            ));
+                        }
+                    }
+                    return Value::Empty;
+                }
+
                 let old_current_sym = self.current_symbol.take();
 
                 self.current_symbol.replace(path);

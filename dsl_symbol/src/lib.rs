@@ -588,6 +588,7 @@ impl Type {
     pub fn resolve_path(&self) -> Option<Vec<String>> {
         match self {
             Type::Template { path, .. } => Some(path.clone()),
+            Type::TemplateTemplate { path, .. } => Some(path.clone()),
             Type::Integer {
                 signed: true,
                 llvm_type,
@@ -616,6 +617,7 @@ impl Type {
                 }
             }
             Type::Char { .. } => Some(vec!["core".to_string(), format!("char")]),
+            Type::Generic { base_type, .. } => base_type.resolve_path(),
             _ => None,
         }
     }

@@ -1,4 +1,7 @@
-use dsl_symbol::{Symbol, SymbolValue};
+use std::collections::HashMap;
+
+use dsl_errors::check;
+use dsl_symbol::{Symbol, SymbolValue, Value};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::{
     LLVMArrayType, LLVMDoubleType, LLVMFloatType, LLVMFunctionType, LLVMInt1Type, LLVMInt32Type,
@@ -117,15 +120,6 @@ impl Module {
                             let syysdf = al_sym;
                             match &syysdf.value {
                                 SymbolValue::Generic(ty, bounds) => return ty.clone(),
-                                // SymbolValue::Template(dsl_symbol::Type::TemplateTemplate {
-                                //     ..
-                                // }) => {
-                                //     self.add_error(format!(
-                                //         "Template type `{}` requires a generic argument",
-                                //         str
-                                //     ));
-                                //     return dsl_symbol::Type::Empty;
-                                // }
                                 SymbolValue::Template(ty) => return ty.clone(),
                                 _ => {
                                     self.add_error(format!("Unsupported type {:?}", c));
@@ -156,10 +150,170 @@ impl Module {
                 base_type,
                 arguments,
                 ..
-            }) => dsl_symbol::Type::Generic {
-                base_type: Box::new(self.gen_type(base_type)),
-                parameters: arguments.iter().map(|f| self.gen_type(f)).collect(),
-            },
+            }) => {
+                let dsl_symbol::Type::TemplateTemplate { path, fields, ty_params, existing, specialization }= self.gen_type(base_type) else {
+                    return dsl_symbol::Type::Empty
+                };
+                let parameters: Vec<dsl_symbol::Type> =
+                    arguments.iter().map(|f| self.gen_type(f)).collect();
+
+                let old_sym = self.current_symbol.replace(path.clone());
+
+                let mut fn_types = vec![];
+
+                {
+                    let mut sym = self.symbol_root.borrow_mut();
+                    let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
+
+                    if let Some(current) = current {
+                        let mut gens = parameters.iter();
+
+                        let mut pram_iter = ty_params.iter();
+
+                        while let Some(p) = gens.next() {
+                            let Some((name, bounds)) = pram_iter.next() else {
+                                    self.add_error(format!("Extra generic parameter in template initializer!"));
+                                    break;
+                                };
+                            if let Some(sym) = current.children.get_mut(name) {
+                                match &mut sym.value {
+                                    SymbolValue::Generic(ty, _) => {
+                                        *ty = p.clone();
+                                        fn_types.push(ty.to_string())
+                                    }
+                                    _ => (),
+                                }
+                            }
+                        }
+
+                        if pram_iter.count() > 0 {
+                            self.add_error(format!(
+                                "Extra generic parameter in template initializer!"
+                            ));
+                        }
+                    }
+                }
+
+                let mut vars = LinkedHashMap::new();
+
+                let specialization = specialization.iter().find(|(f, _)| {
+                    for (a, b) in f.iter().zip(fn_types.iter()) {
+                        if a == "" {
+                            return true;
+                        } else if a != b {
+                            return false;
+                        } else {
+                            return true;
+                        }
+                    }
+                    true
+                });
+                let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
+
+                let name = if let Some(last) = path.last() {
+                    if let Some(ty) = existing_impl {
+                        let sym = self.symbol_root.borrow();
+                        let current = self.get_symbol(&sym, &ty.1);
+                        if let Some(ty) = current {
+                            if let SymbolValue::Template(t) = &ty.value {
+                                Some((ty.name.clone(), t.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        let path = &path[..path.len() - 1];
+                        let name = self.get_next_name(path, last.clone());
+                        let (template, name) = {
+                            let sym = self.symbol_root.borrow();
+                            let opvars = if let Some(special) = specialization {
+                                let current = self.get_symbol(&sym, &special.1);
+
+                                if let Some(Symbol {
+                                    value:
+                                        SymbolValue::Template(dsl_symbol::Type::TemplateTemplate {
+                                            fields,
+                                            ..
+                                        }),
+                                    ..
+                                }) = current
+                                {
+                                    Some(fields)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            let mut tyep = Vec::from(path);
+                            tyep.push(name.clone());
+
+                            if let Some(opvars) = opvars {
+                                for f in opvars.iter() {
+                                    let name = f.symbol.as_string();
+                                    vars.insert(name.clone(), self.gen_type(&f.symbol_type));
+                                }
+                            } else {
+                                for f in fields.iter() {
+                                    let name = f.symbol.as_string();
+                                    vars.insert(name.clone(), self.gen_type(&f.symbol_type));
+                                }
+                            };
+
+                            let mng = self.get_mangled_name_with_path(path, &name);
+                            use dsl_symbol::Type;
+                            let template = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_struct(&tyep, &mng, vars.clone()),
+                                Type
+                            );
+
+                            (template, name)
+                        };
+
+                        let ty = template.clone();
+                        self.add_and_set_symbol_from_path(
+                            path,
+                            &name,
+                            SymbolValue::Template(template),
+                        );
+
+                        Some((name, ty))
+                    }
+                } else {
+                    None
+                };
+
+                self.current_symbol.replace(old_sym);
+
+                if let Some((name, ty)) = name {
+                    let mut npath = Vec::from(&path[..path.len() - 1]);
+                    npath.push(name);
+
+                    let mut sym = self.symbol_root.borrow_mut();
+
+                    let tmpl_templ = self.get_symbol_mut(&mut sym, &path);
+                    if let Some(Symbol {
+                        value:
+                            SymbolValue::Template(dsl_symbol::Type::TemplateTemplate {
+                                existing, ..
+                            }),
+                        ..
+                    }) = tmpl_templ
+                    {
+                        if existing_impl.is_none() {
+                            existing.insert(fn_types, npath.clone());
+                        }
+                    }
+
+                    return ty;
+                }
+
+                dsl_symbol::Type::Empty
+            }
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
                 dsl_symbol::Type::Empty

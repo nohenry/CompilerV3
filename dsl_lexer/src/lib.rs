@@ -658,6 +658,11 @@ fn get_number(iter: &mut TokenIterator) -> Result<(Literal, usize), LexError> {
             },
         },
     }) {
+        if let Some(p) = iter.peek() {
+            if p.to_digit(base.try_into().unwrap()).is_none() {
+                break;
+            }
+        }
         if index == 0 && just_dec {
             just_dec = false;
             continue;
