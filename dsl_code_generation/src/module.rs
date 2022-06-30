@@ -1,7 +1,8 @@
-use std::{cell::RefCell, fmt::Debug, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc, collections::btree_map::VacantEntry};
 
 use colored::{ColoredString, Colorize};
 use dsl_llvm::IRBuilder;
+use linked_hash_map::Entry;
 use llvm_sys::{core::LLVMCreateBuilder, prelude::LLVMModuleRef};
 
 use dsl_lexer::ast::ParseNode;
@@ -238,6 +239,19 @@ impl Module {
             if let Some(sym) = self.find_up_chain(sym, &chain[..chain.len() - 1], name) {
                 return Some(sym);
             }
+        }
+        None
+    }
+
+    pub fn find_up_chain_mut<'a>(
+        &self,
+        sym: &'a mut Symbol,
+        chain: &[String],
+        name: &String,
+    ) -> Option<Entry<'a, String, Symbol>> {
+        let current = self.get_symbol_mut(sym, chain);
+        if let Some(current) = current {
+            return Some(current.children.entry(name.clone()))
         }
         None
     }

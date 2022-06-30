@@ -3,14 +3,15 @@ template Data<T> {
     x: T
 }
 
-action Data<uint32> {
+action <T> Data<T> {
     act(const self) => {
     }
 }
 
 main(x: int32) => {
-    const data = Data {
+    let data = Data {
         x: 9
     } 
 
+    data.act()
 }

@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use dsl_errors::{check, CodeGenError};
 use dsl_llvm::IRBuilder;
-use linked_hash_map::LinkedHashMap;
+use linked_hash_map::{Entry, LinkedHashMap};
 use llvm_sys::core::LLVMGetParam;
 
 use crate::module::CodeGenPass;
 use dsl_lexer::ast::{
-    ActionDecleration, FunctionDecleration, FunctionSignature, GenericParameters, ParseNode,
-    TemplateDecleration, TypeSymbol, VariableDecleration,
+    ActionDecleration, Expression, FunctionDecleration, FunctionSignature, FunctionType,
+    GenericParameters, ParseNode, TemplateDecleration, TypeSymbol, VariableDecleration,
 };
 
 use super::module::Module;
@@ -248,31 +248,148 @@ impl Module {
                 generic,
                 ..
             }) => {
-                let temp = self.gen_type(template_type);
-                let Some(path)= temp.resolve_path() else {
-                    // TODO: errors
-                    return Value::Empty;
-                };
+                if let Some(generic) = generic {
+                    let dsl_lexer::ast::Type::GenericType(dsl_lexer::ast::GenericType {base_type: box dsl_lexer::ast::Type::NamedType(tok), ..}) = template_type else {
+                        // TODO: errors
+                        return Value::Empty;
+                    };
+                    let ParseNode::GenericParameters(ps1) = &**generic else {
+                        // TODO: errors
+                        return Value::Empty;
+                    };
 
-                if let Type::TemplateTemplate { path, .. } = &temp {
-                    if let Some(s) = path.last() {
-                        if let CodeGenPass::Symbols = &*self.code_gen_pass.borrow() {
-                            self.add_error(format!(
-                                "Template type `{}` requires a generic argument",
-                                s
-                            ));
+                    let name = tok.as_string();
+                    let sym = &mut *self.symbol_root.borrow_mut();
+                    let mut ty = self.find_up_chain_mut(sym, &self.current_symbol.borrow(), &name);
+                    let Some(Entry::Occupied(occ)) = &mut ty else {
+                        // TODO: errors
+                        return Value::Empty;
+                    };
+                    let fnd = occ.get_mut();
+
+                    let generic =
+                        check!(self.errors.borrow_mut(), self.gen_generic(&generic), Value);
+
+                    if let ParseNode::Expression(Expression::Block(st, _), _) = &**body {
+                        for fun in st {
+                            if let ParseNode::FunctionDecleration(func) = fun {
+                                let ngen = if let Some(fngen) = &func.generic {
+                                    let fngen = check!(
+                                        self.errors.borrow_mut(),
+                                        self.gen_generic(&fngen),
+                                        Value
+                                    );
+                                    // let ParseNode::GenericParameters(ps2) = &**fngen  else {
+                                    //     // TODO: errors
+                                    //     return Value::Empty;
+                                    // };
+                                    // if !ps1
+                                    //     .parameters
+                                    //     .iter()
+                                    //     .map(|f| &f.0)
+                                    //     .ne(ps1.parameters.iter().map(|f| &f.0))
+                                    // {
+                                    //     self.add_error("Generic parameter redefined!".into());
+                                    //     return Value::Empty;
+                                    // }
+                                    if !fngen.keys().ne(generic.keys()) {
+                                        self.add_error("Generic parameter redefined!".into());
+                                        return Value::Empty;
+                                    }
+
+                                    generic
+                                        .clone()
+                                        .into_iter()
+                                        .chain(fngen.into_iter())
+                                        .collect()
+
+                                    // ps1.parameters
+                                    //     .to_vec()
+                                    //     .into_iter()
+                                    //     .chain(ps2.parameters.to_vec().into_iter())
+                                    //     .collect()
+                                } else {
+                                    generic.clone()
+                                    // ps1.parameters.to_vec()
+                                };
+                                // let nfun = ParseNode::FunctionDecleration(FunctionDecleration {
+                                //     generic: Some(Box::new(ParseNode::GenericParameters(
+                                //         GenericParameters {
+                                //             parameters: ngen,
+                                //             range: ps1.range,
+                                //         },
+                                //     ))),
+                                //     ..func.clone()
+                                // });
+
+                                let name = func.identifier.as_string();
+                                let mut path = self.current_symbol.borrow().clone();
+                                path.push(name.clone());
+
+                                let mut i = func.function_type.parameters.clone().into_iter();
+                                let prms: Vec<TypeSymbol> = match i.next() {
+                                    Some(f) => {
+                                        if let dsl_lexer::ast::Type::ConstSelf = &f.symbol_type {
+                                            [TypeSymbol {
+                                                symbol: f.symbol.clone(),
+                                                symbol_type: template_type.clone(),
+                                            }]
+                                            .into_iter()
+                                            .chain(i)
+                                            .collect()
+                                        } else {
+                                            i.collect()
+                                        }
+                                    }
+                                    None => i.collect(),
+                                };
+
+                                fnd.add_child(
+                                    &name,
+                                    SymbolValue::Funtion(Value::FunctionTemplate {
+                                        body: func.body.clone(),
+                                        existing: Default::default(),
+                                        path: path,
+                                        specialization: Default::default(),
+                                        ty: FunctionSignature {
+                                            parameters: prms,
+                                            ..func.function_type.clone()
+                                        },
+                                        ty_params: ngen,
+                                    }),
+                                );
+                                // stmts.push(nfun);
+                            }
                         }
                     }
-                    return Value::Empty;
+                    println!("{:?}", generic);
+                } else {
+                    let temp = self.gen_type(template_type);
+                    let Some(path)= temp.resolve_path() else {
+                        // TODO: errors
+                        return Value::Empty;
+                    };
+
+                    if let Type::TemplateTemplate { path, .. } = &temp {
+                        if let Some(s) = path.last() {
+                            if let CodeGenPass::Symbols = &*self.code_gen_pass.borrow() {
+                                self.add_error(format!(
+                                    "Template type `{}` requires a generic argument",
+                                    s
+                                ));
+                            }
+                        }
+                        return Value::Empty;
+                    }
+
+                    let old_current_sym = self.current_symbol.take();
+
+                    self.current_symbol.replace(path);
+
+                    self.gen_parse_node(body);
+
+                    self.current_symbol.replace(old_current_sym);
                 }
-
-                let old_current_sym = self.current_symbol.take();
-
-                self.current_symbol.replace(path);
-
-                self.gen_parse_node(body);
-
-                self.current_symbol.replace(old_current_sym);
             }
             ParseNode::VariableDecleration(VariableDecleration {
                 identifier,
