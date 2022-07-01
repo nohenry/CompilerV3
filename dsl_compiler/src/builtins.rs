@@ -9,7 +9,6 @@ use rt_format::ParsedFormat;
 
 fn println(args: &Vec<Expression>) -> ParseNode {
     let mut arg_iter = args.iter();
-    // let mut
     if let Some(a) = arg_iter.next() {
         if let Expression::Literal(Literal::String(s, _)) = a {
             let mut args = vec![];

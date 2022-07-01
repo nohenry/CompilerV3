@@ -201,7 +201,7 @@ impl Module {
                                                                 Value
                                                             )
                                                         }
-                                                        SymbolValue::Funtion(
+                                                        SymbolValue::Function(
                                                             func @ (Value::Function { .. }
                                                             | Value::FunctionTemplate {
                                                                 ..
@@ -218,7 +218,7 @@ impl Module {
                                                 } else if let Some(base) = base {
                                                     if let Some(child) = base.children.get(m) {
                                                         match &child.value {
-                                                            SymbolValue::Funtion(
+                                                            SymbolValue::Function(
                                                                 func @ (Value::Function { .. }
                                                                 | Value::FunctionTemplate {
                                                                     ..
@@ -485,7 +485,7 @@ impl Module {
                 if let Some(sym) = sym {
                     match &sym.value {
                         SymbolValue::Variable(v) => v.clone(),
-                        SymbolValue::Funtion(v) => v.clone(),
+                        SymbolValue::Function(v) => v.clone(),
                         SymbolValue::Macro(_) => {
                             let path =
                                 self.find_path_up_chain(&root, &self.current_symbol.borrow(), &str);
@@ -891,7 +891,7 @@ impl Module {
                                     // FIXME: idk check if three of these are really needed
                                     if let Some(Symbol {
                                         value:
-                                            SymbolValue::Funtion(Value::FunctionTemplate { ty, .. }),
+                                            SymbolValue::Function(Value::FunctionTemplate { ty, .. }),
                                         ..
                                     }) = current
                                     {
@@ -974,7 +974,7 @@ impl Module {
                             self.add_and_set_symbol_from_path(
                                 &path,
                                 &name,
-                                SymbolValue::Funtion(function),
+                                SymbolValue::Function(function),
                             );
 
                             let pallocs: Result<Vec<Value>, _> = types
@@ -1035,7 +1035,7 @@ impl Module {
 
                                 if let Some(Symbol {
                                     value:
-                                        SymbolValue::Funtion(Value::FunctionTemplate {
+                                        SymbolValue::Function(Value::FunctionTemplate {
                                             body,  ..
                                         }),
                                     ..
@@ -1088,7 +1088,7 @@ impl Module {
                         // let mut sym = self.symbol_root.borrow_mut();
                         let fn_templ = self.get_symbol_mut(&mut sym, &path);
                         if let Some(Symbol {
-                            value: SymbolValue::Funtion(Value::FunctionTemplate { existing, .. }),
+                            value: SymbolValue::Function(Value::FunctionTemplate { existing, .. }),
                             ..
                         }) = fn_templ
                         {
@@ -1097,7 +1097,7 @@ impl Module {
 
                         let current = self.get_symbol(&mut sym, &npath);
                         if let Some(Symbol {
-                            value: SymbolValue::Funtion(val),
+                            value: SymbolValue::Function(val),
                             ..
                         }) = current
                         {
@@ -1259,7 +1259,7 @@ impl Module {
                                     // FIXME: idk check if three of these are really needed
                                     if let Some(Symbol {
                                         value:
-                                            SymbolValue::Funtion(Value::FunctionTemplate {
+                                            SymbolValue::Function(Value::FunctionTemplate {
                                                 ty,
                                                 ..
                                             }),
@@ -1342,7 +1342,7 @@ impl Module {
                             self.add_and_set_symbol_from_path(
                                 &path,
                                 &name,
-                                SymbolValue::Funtion(function),
+                                SymbolValue::Function(function),
                             );
 
                             let pallocs: Result<Vec<Value>, _> = types
@@ -1403,7 +1403,7 @@ impl Module {
 
                                 if let Some(Symbol {
                                     value:
-                                        SymbolValue::Funtion(Value::FunctionTemplate {
+                                        SymbolValue::Function(Value::FunctionTemplate {
                                             body,..
                                         }),
                                     ..
@@ -1456,7 +1456,7 @@ impl Module {
                         // let mut sym = self.symbol_root.borrow_mut();
                         let fn_templ = self.get_symbol_mut(&mut sym, &path);
                         if let Some(Symbol {
-                            value: SymbolValue::Funtion(Value::FunctionTemplate { existing, .. }),
+                            value: SymbolValue::Function(Value::FunctionTemplate { existing, .. }),
                             ..
                         }) = fn_templ
                         {
@@ -1465,7 +1465,7 @@ impl Module {
 
                         let current = self.get_symbol(&mut sym, &npath);
                         if let Some(Symbol {
-                            value: SymbolValue::Funtion(val),
+                            value: SymbolValue::Function(val),
                             ..
                         }) = current
                         {

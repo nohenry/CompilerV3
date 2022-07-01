@@ -1,7 +1,9 @@
-import poop
-
 template Data<T> {
     x: T
+}
+
+spec Write {
+    write(self) =>
 }
 
 action <T> Data<T> {
@@ -14,5 +16,5 @@ main() => {
         len: 7
     } 
 
-    println("Poop {}", 7)
+    println("Poop {}", "Potato")
 }

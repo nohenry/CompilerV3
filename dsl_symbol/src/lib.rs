@@ -61,6 +61,10 @@ pub enum Value {
         existing: HashMap<Vec<String>, Vec<String>>,
         specialization: HashMap<Vec<String>, Vec<String>>,
     },
+    SpecFunction {
+        parameters: Vec<(String, Type)>,
+        return_type: Type,
+    },
     Template {
         llvm_value: LLVMValueRef,
         template_type: Type,
@@ -432,6 +436,7 @@ impl Display for Value {
             Value::Literal { literal_type, .. } => write!(f, "{}", literal_type),
             Value::Variable { variable_type, .. } => write!(f, "{}", variable_type),
             Value::Function { function_type, .. } => write!(f, "{}", function_type),
+            Value::SpecFunction{  .. } => write!(f, ""),
             Value::MemberFunction { func, .. } => write!(f, "{}", func),
             Value::Template { template_type, .. } => write!(f, "{}", template_type),
             Value::TemplateFields { template_type, .. } => write!(f, "{}", template_type),
@@ -533,6 +538,7 @@ pub enum Type {
         base_type: Box<Type>,
         parameters: Vec<Type>,
     },
+    Spec {},
 }
 
 impl Type {
@@ -555,7 +561,7 @@ impl Type {
             Self::Reference { llvm_type, .. } => *llvm_type,
             Self::Function { llvm_type, .. } => unsafe { LLVMPointerType(*llvm_type, 0) },
             Self::Template { llvm_type, .. } => *llvm_type,
-            Self::Empty | Self::TemplateTemplate { .. } | Self::Generic { .. } => {
+            _ => {
                 panic!("Called on unkown value!")
             }
         }
@@ -702,6 +708,9 @@ impl Display for Type {
             }
             Self::Template { .. } => {
                 write!(f, "**Template**")
+            }
+            Self::Spec { .. } => {
+                write!(f, "**Spec**")
             }
             Self::TemplateTemplate { path, .. } => {
                 if let Some(p) = path.last() {
@@ -882,7 +891,8 @@ bitflags! {
 pub enum SymbolValue {
     Empty,
     Variable(Value),
-    Funtion(Value),
+    Function(Value),
+    // SpecFunction(Value),
     Field(Type),
     Template(Type),
     Action(Type),
@@ -968,7 +978,8 @@ impl Display for Symbol {
                 SymbolValue::Empty => write!(f, "{}", self.name),
                 SymbolValue::Field(_) => write!(f, "Field `{}`", self.name),
                 SymbolValue::Macro(_) => write!(f, "Maro `{}`", self.name),
-                SymbolValue::Funtion(_) => write!(f, "Function `{}`", self.name),
+                SymbolValue::Function(_) => write!(f, "Function `{}`", self.name),
+                // SymbolValue::SpecFunction(_) => write!(f, "Spec Function `{}`", self.name),
                 SymbolValue::Module => write!(f, "Module `{}`", self.name),
                 SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
                 SymbolValue::Template(_) => write!(f, "Template `{}`", self.name),
@@ -985,7 +996,10 @@ impl Display for Symbol {
                 SymbolValue::Empty => write!(f, "{} ({:?})", self.name, self.flags),
                 SymbolValue::Macro(_) => write!(f, "Macro {} ({:?})", self.name, self.flags),
                 SymbolValue::Field(_) => write!(f, "Field `{}` ({:?})", self.name, self.flags),
-                SymbolValue::Funtion(_) => write!(f, "Function `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Function(_) => write!(f, "Function `{}` ({:?})", self.name, self.flags),
+                // SymbolValue::SpecFunction(_) => {
+                    // write!(f, "Spec Function `{}` ({:?})", self.name, self.flags)
+                // }
                 SymbolValue::Module => write!(f, "Module `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Spec(_) => write!(f, "Spec `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Template(_) => {

@@ -95,7 +95,7 @@ impl Module {
             let root = self.symbol_root.borrow();
             let sym = self.get_symbol(&root, &["test".into(), "main".into()]);
             if let Some(Symbol {
-                value: SymbolValue::Funtion(val),
+                value: SymbolValue::Function(val),
                 ..
             }) = sym
             {
@@ -112,7 +112,7 @@ impl Module {
         self.builder.create_ret_void();
 
         self.current_function.replace(main_fn.clone());
-        self.add_symbol(&"main".to_string(), SymbolValue::Funtion(main_fn));
+        self.add_symbol(&"main".to_string(), SymbolValue::Function(main_fn));
     }
 
     pub fn gen_core(&self) {
@@ -151,7 +151,7 @@ impl Module {
 
         self.add_symbol(
             &"print".to_string(),
-            SymbolValue::Funtion(
+            SymbolValue::Function(
                 self.builder
                     .add_function(
                         IRBuilder::get_fn(

@@ -9,7 +9,8 @@ use crate::module::CodeGenPass;
 use dsl_lexer::{
     ast::{
         ActionDecleration, Expression, FunctionDecleration, FunctionSignature, GenericParameters,
-        ImportDecleration, ParseNode, TemplateDecleration, TypeSymbol, VariableDecleration,
+        ImportDecleration, ParseNode, SpecBody, SpecDecleration, TemplateDecleration, TypeSymbol,
+        VariableDecleration,
     },
     Keyword, Token, TokenKind,
 };
@@ -269,6 +270,78 @@ impl Module {
                     }
                 }
             }
+            ParseNode::SpecDecleration(SpecDecleration {
+                identifier,
+                body,
+                generic,
+                ..
+            }) => {
+                let name = identifier.as_string();
+                self.add_and_set_symbol(&name, SymbolValue::Spec(Type::Spec {}));
+
+                for stmt in body {
+                    match stmt {
+                        SpecBody::Function(tok, func) => {
+                            let fname = tok.as_string();
+                            let return_type = self.gen_type(&func.return_type);
+                            let types: Option<Vec<(String, Type)>> = func
+                                .parameters
+                                .iter()
+                                .map(|f| {
+                                    if &f.symbol.as_string() == "self"
+                                        || &f.symbol.as_string() == "const self"
+                                    {
+                                        // let sym = self.symbol_root.borrow();
+                                        // let current =
+                                        //     self.get_symbol(&sym, &self.current_symbol.borrow());
+
+                                        // if let Some(Symbol {
+                                        //     value: SymbolValue::Template(t) | SymbolValue::Primitive(t),
+                                        //     ..
+                                        // }) = current
+                                        // {
+                                        //     if let dsl_lexer::ast::Type::ConstSelf = f.symbol_type {
+                                        //         Some((
+                                        //             f.symbol.as_string().clone(),
+                                        //             t.clone().get_ptr(true),
+                                        //         ))
+                                        //     } else if let dsl_lexer::ast::Type::SELF = f.symbol_type {
+                                        //         Some((
+                                        //             f.symbol.as_string().clone(),
+                                        //             t.clone().get_ptr(false),
+                                        //         ))
+                                        //     } else {
+                                        //         panic!("Typejsconst mismathc idk (1)")
+                                        //     }
+                                        // } else {
+                                        //     None
+                                        // }
+                                        Some((f.symbol.as_string().clone(), IRBuilder::get_unit()))
+                                    } else {
+                                        Some((
+                                            f.symbol.as_string().clone(),
+                                            self.gen_type(&f.symbol_type),
+                                        ))
+                                    }
+                                })
+                                .collect();
+                            let Some(parameters) = types else {
+                                // TODO: errors
+                                return Value::Empty;
+                            };
+                            self.add_symbol(
+                                &fname,
+                                SymbolValue::Function(Value::SpecFunction {
+                                    parameters,
+                                    return_type,
+                                }),
+                            )
+                        }
+                    }
+                }
+
+                self.pop_symbol();
+            }
             ParseNode::ActionDecleration(ActionDecleration {
                 template_type,
                 body,
@@ -369,7 +442,7 @@ impl Module {
 
                                 let sym = fnd.add_child(
                                     &name,
-                                    SymbolValue::Funtion(Value::FunctionTemplate {
+                                    SymbolValue::Function(Value::FunctionTemplate {
                                         body: func.body.clone(),
                                         existing: Default::default(),
                                         path: path,
@@ -560,7 +633,7 @@ impl Module {
 
                     self.add_and_set_symbol(
                         &name,
-                        SymbolValue::Funtion(Value::FunctionTemplate {
+                        SymbolValue::Function(Value::FunctionTemplate {
                             body: body.clone(),
                             ty: fty.clone(),
                             ty_params,
@@ -607,7 +680,9 @@ impl Module {
                             .collect();
                         if let Some(Symbol {
                             value:
-                                SymbolValue::Funtion(Value::FunctionTemplate { specialization, .. }),
+                                SymbolValue::Function(Value::FunctionTemplate {
+                                    specialization, ..
+                                }),
                             ..
                         }) = current
                         {
@@ -617,7 +692,7 @@ impl Module {
 
                     self.add_and_set_symbol(
                         &name,
-                        SymbolValue::Funtion(Value::FunctionTemplate {
+                        SymbolValue::Function(Value::FunctionTemplate {
                             body: body.clone(),
                             ty: fty.clone(),
                             ty_params,
@@ -695,7 +770,7 @@ impl Module {
                             Value
                         );
 
-                        self.add_and_set_symbol(&name, SymbolValue::Funtion(function));
+                        self.add_and_set_symbol(&name, SymbolValue::Function(function));
 
                         {
                             let mut cur_sym = self.symbol_root.borrow_mut();
@@ -726,7 +801,7 @@ impl Module {
 
                             if let Some(Symbol {
                                 value:
-                                    SymbolValue::Funtion(
+                                    SymbolValue::Function(
                                         function @ Value::Function {
                                             function_type:
                                                 Type::Function {
