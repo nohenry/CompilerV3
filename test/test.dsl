@@ -1,20 +1,19 @@
-template Data<T> {
-    x: T
+template Data {
+    x: uint32
 }
 
 spec Write {
-    write(self) =>
+    write(self)
 }
 
-action <T> Data<T> {
-    act(const self, yes: int32) => {
-    }
+action Data: Write {
+    
 }
 
-main() => {
+main() {
     let list = List {
         len: 7
     } 
 
-    println("Poop {}", "Potato")
+    println("Poop")
 }

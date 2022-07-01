@@ -116,6 +116,8 @@ impl Module {
                             match &syysdf.value {
                                 SymbolValue::Generic(ty, bounds) => return ty.clone(),
                                 SymbolValue::Template(ty) => return ty.clone(),
+                                SymbolValue::Action(ty) => return ty.clone(),
+                                SymbolValue::Spec(ty) => return ty.clone(),
                                 _ => {
                                     self.add_error(format!("Unsupported type {:?}", c));
                                     return dsl_symbol::Type::Empty;

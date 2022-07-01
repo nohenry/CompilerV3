@@ -436,7 +436,7 @@ impl Display for Value {
             Value::Literal { literal_type, .. } => write!(f, "{}", literal_type),
             Value::Variable { variable_type, .. } => write!(f, "{}", variable_type),
             Value::Function { function_type, .. } => write!(f, "{}", function_type),
-            Value::SpecFunction{  .. } => write!(f, ""),
+            Value::SpecFunction { .. } => write!(f, ""),
             Value::MemberFunction { func, .. } => write!(f, "{}", func),
             Value::Template { template_type, .. } => write!(f, "{}", template_type),
             Value::TemplateFields { template_type, .. } => write!(f, "{}", template_type),
@@ -538,7 +538,9 @@ pub enum Type {
         base_type: Box<Type>,
         parameters: Vec<Type>,
     },
-    Spec {},
+    Spec {
+        path: Vec<String>,
+    },
 }
 
 impl Type {
@@ -904,6 +906,25 @@ pub enum SymbolValue {
     Module,
 }
 
+impl std::fmt::Debug for SymbolValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "Empty"),
+            Self::Variable(arg0) => f.debug_tuple("Variable").field(arg0).finish(),
+            Self::Function(arg0) => f.debug_tuple("Function").field(arg0).finish(),
+            Self::Field(arg0) => f.debug_tuple("Field").field(arg0).finish(),
+            Self::Template(arg0) => f.debug_tuple("Template").field(arg0).finish(),
+            Self::Action(arg0) => f.debug_tuple("Action").field(arg0).finish(),
+            Self::Spec(arg0) => f.debug_tuple("Spec").field(arg0).finish(),
+            Self::Alias(arg0) => f.debug_tuple("Alias").field(arg0).finish(),
+            Self::Generic(arg0, arg1) => f.debug_tuple("Generic").field(arg0).field(arg1).finish(),
+            Self::Primitive(arg0) => f.debug_tuple("Primitive").field(arg0).finish(),
+            Self::Macro(arg0) => f.debug_tuple("Macro").finish(),
+            Self::Module => write!(f, "Module"),
+        }
+    }
+}
+
 impl SymbolValue {
     pub fn is_const(&self) -> bool {
         match self {
@@ -913,6 +934,7 @@ impl SymbolValue {
     }
 }
 
+#[derive(Debug)]
 pub struct Symbol {
     pub name: String,
     pub value: SymbolValue,
@@ -996,9 +1018,11 @@ impl Display for Symbol {
                 SymbolValue::Empty => write!(f, "{} ({:?})", self.name, self.flags),
                 SymbolValue::Macro(_) => write!(f, "Macro {} ({:?})", self.name, self.flags),
                 SymbolValue::Field(_) => write!(f, "Field `{}` ({:?})", self.name, self.flags),
-                SymbolValue::Function(_) => write!(f, "Function `{}` ({:?})", self.name, self.flags),
+                SymbolValue::Function(_) => {
+                    write!(f, "Function `{}` ({:?})", self.name, self.flags)
+                }
                 // SymbolValue::SpecFunction(_) => {
-                    // write!(f, "Spec Function `{}` ({:?})", self.name, self.flags)
+                // write!(f, "Spec Function `{}` ({:?})", self.name, self.flags)
                 // }
                 SymbolValue::Module => write!(f, "Module `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Spec(_) => write!(f, "Spec `{}` ({:?})", self.name, self.flags),

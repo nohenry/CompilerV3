@@ -277,75 +277,85 @@ impl Module {
                 ..
             }) => {
                 let name = identifier.as_string();
-                self.add_and_set_symbol(&name, SymbolValue::Spec(Type::Spec {}));
 
-                for stmt in body {
-                    match stmt {
-                        SpecBody::Function(tok, func) => {
-                            let fname = tok.as_string();
-                            let return_type = self.gen_type(&func.return_type);
-                            let types: Option<Vec<(String, Type)>> = func
-                                .parameters
-                                .iter()
-                                .map(|f| {
-                                    if &f.symbol.as_string() == "self"
-                                        || &f.symbol.as_string() == "const self"
-                                    {
-                                        // let sym = self.symbol_root.borrow();
-                                        // let current =
-                                        //     self.get_symbol(&sym, &self.current_symbol.borrow());
+                match &*self.code_gen_pass.borrow() {
+                    CodeGenPass::TemplateSymbols => {
+                        let path: Vec<String> = self
+                            .current_symbol
+                            .borrow()
+                            .clone()
+                            .into_iter()
+                            .chain([name.clone()].into_iter())
+                            .collect();
+                        self.add_and_set_symbol(&name, SymbolValue::Spec(Type::Spec { path }));
+                        self.pop_symbol();
+                        return Value::Empty;
+                    }
+                    CodeGenPass::TemplateValues => {
+                        let mut sym_root = self.symbol_root.borrow_mut();
+                        let sym = self.get_symbol_mut(&mut sym_root, &self.current_symbol.borrow());
 
-                                        // if let Some(Symbol {
-                                        //     value: SymbolValue::Template(t) | SymbolValue::Primitive(t),
-                                        //     ..
-                                        // }) = current
-                                        // {
-                                        //     if let dsl_lexer::ast::Type::ConstSelf = f.symbol_type {
-                                        //         Some((
-                                        //             f.symbol.as_string().clone(),
-                                        //             t.clone().get_ptr(true),
-                                        //         ))
-                                        //     } else if let dsl_lexer::ast::Type::SELF = f.symbol_type {
-                                        //         Some((
-                                        //             f.symbol.as_string().clone(),
-                                        //             t.clone().get_ptr(false),
-                                        //         ))
-                                        //     } else {
-                                        //         panic!("Typejsconst mismathc idk (1)")
-                                        //     }
-                                        // } else {
-                                        //     None
-                                        // }
-                                        Some((f.symbol.as_string().clone(), IRBuilder::get_unit()))
-                                    } else {
-                                        Some((
-                                            f.symbol.as_string().clone(),
-                                            self.gen_type(&f.symbol_type),
-                                        ))
+                        if let Some(curr) = sym {
+                            if let Some(
+                                sym @ Symbol {
+                                    value: SymbolValue::Spec(_),
+                                    ..
+                                },
+                            ) = curr.children.get_mut(&name)
+                            {
+                                for stmt in body {
+                                    match stmt {
+                                        SpecBody::Function(tok, func) => {
+                                            let fname = tok.as_string();
+                                            let return_type = self.gen_type(&func.return_type);
+                                            let types: Option<Vec<(String, Type)>> = func
+                                                .parameters
+                                                .iter()
+                                                .map(|f| {
+                                                    if &f.symbol.as_string() == "self"
+                                                        || &f.symbol.as_string() == "const self"
+                                                    {
+                                                        Some((
+                                                            f.symbol.as_string().clone(),
+                                                            IRBuilder::get_unit(),
+                                                        ))
+                                                    } else {
+                                                        Some((
+                                                            f.symbol.as_string().clone(),
+                                                            self.gen_type(&f.symbol_type),
+                                                        ))
+                                                    }
+                                                })
+                                                .collect();
+                                            let Some(parameters) = types else {
+                                                // TODO: errors
+                                                return Value::Empty;
+                                            };
+                                            sym.add_child(
+                                                &fname,
+                                                SymbolValue::Function(Value::SpecFunction {
+                                                    parameters,
+                                                    return_type,
+                                                }),
+                                            );
+                                        }
                                     }
-                                })
-                                .collect();
-                            let Some(parameters) = types else {
-                                // TODO: errors
-                                return Value::Empty;
-                            };
-                            self.add_symbol(
-                                &fname,
-                                SymbolValue::Function(Value::SpecFunction {
-                                    parameters,
-                                    return_type,
-                                }),
-                            )
+                                }
+                            } else {
+                                self.add_error("Unable to find spec definition (1)".into());
+                            }
+                        } else {
+                            self.add_error("Unable to find spec definition (2)".into());
                         }
                     }
+                    _ => return Value::Empty,
                 }
-
-                self.pop_symbol();
             }
             ParseNode::ActionDecleration(ActionDecleration {
                 template_type,
                 body,
                 generic,
+                specification,
                 ..
             }) => {
                 if let Some(generic) = generic {
@@ -478,6 +488,10 @@ impl Module {
                         }
                     }
                 } else {
+                    let CodeGenPass::Values = *self.code_gen_pass.borrow() else {
+                        return Value::Empty;
+                    };
+
                     let temp = self.gen_type(template_type);
                     let Some(path)= temp.resolve_path() else {
                         // TODO: errors
@@ -501,6 +515,27 @@ impl Module {
                     self.current_symbol.replace(path);
 
                     self.gen_parse_node(body);
+
+                    if let Some(spec) = specification {
+                        let Type::Spec {path} = self.gen_type(&spec) else {
+                            self.add_error("Type is not a specification!".into());
+                            return Value::Empty;
+                        };
+
+                        let sym_root = self.symbol_root.borrow();
+                        let Some(spec )= self.get_symbol(&sym_root, &path) else  {
+                            self.add_error("Unable to find spec!".into());
+                            return Value::Empty;
+                        };
+
+                        let Some(act)= self.get_symbol(&sym_root, &self.current_symbol.borrow()) else  {
+                            self.add_error("Unable to find current action!".into());
+                            return Value::Empty;
+                        };
+
+                        println!("{:?}", spec);
+                        println!("{:?}", act);
+                    }
 
                     self.current_symbol.replace(old_current_sym);
                 }

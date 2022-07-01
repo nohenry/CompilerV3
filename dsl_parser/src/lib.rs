@@ -692,7 +692,7 @@ impl<'a> Parser<'a> {
             Type::Unit
         };
 
-        let _arrow = pexpect!(self, Operator::create_expect(OperatorKind::Arrow));
+        // let _arrow = pexpect!(self, Operator::create_expect(OperatorKind::Arrow));
 
         let end = ret_type.get_range().1;
         Some(FunctionSignature {
