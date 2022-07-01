@@ -1,8 +1,9 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use crate::{default_range, OperatorKind, Range, Token, TokenKind};
 use colored::{ColoredString, Colorize};
 use dsl_util::{cast, CreateParent, CreateParentBx, Grouper, TreeDisplay};
+use rt_format::{Format, FormatArgument, Specifier};
 
 impl Loop {
     pub fn get_range(&self) -> Range {
@@ -982,6 +983,7 @@ pub enum ParseNode {
     TagCollection(Vec<ParseNode>, Box<ParseNode>, Range),
     Import(ImportDecleration),
     Punctuation(Punctuation, Range),
+    Export(Box<ParseNode>, Range),
 }
 
 impl ParseNode {
@@ -1002,6 +1004,7 @@ impl ParseNode {
             ParseNode::TagCollection(_, _, r) => r.clone(),
             ParseNode::Import(i) => i.range,
             ParseNode::Punctuation(_, p) => p.clone(),
+            ParseNode::Export(_, p) => p.clone(),
 
             ParseNode::Empty => default_range(),
         }
@@ -1028,6 +1031,7 @@ impl Display for ParseNode {
             }
             ParseNode::Import(i) => write!(f, "{}", i),
             ParseNode::Punctuation(i, _) => write!(f, "{}", i),
+            ParseNode::Export(i, _) => write!(f, "{}", i),
             ParseNode::Empty => write!(f, "{}", ColoredString::from("None").red()),
         }
     }
@@ -1048,6 +1052,7 @@ impl TreeDisplay for ParseNode {
             ParseNode::Tag(_, _) => 1,
             ParseNode::TagCollection(i, _, _) => i.len() + 1,
             ParseNode::Import(i) => i.num_children(),
+            ParseNode::Export(i, _) => i.num_children(),
             _ => 0,
         }
     }
@@ -1072,6 +1077,7 @@ impl TreeDisplay for ParseNode {
                 }
             }
             ParseNode::Import(i) => i.child_at(index),
+            ParseNode::Export(i, _) => i.child_at(index),
             _ => panic!(),
         }
     }
@@ -1086,6 +1092,7 @@ impl TreeDisplay for ParseNode {
             ParseNode::SpecDecleration(i) => i.child_at_bx(index),
             ParseNode::GenericParameters(i) => i.child_at_bx(index),
             ParseNode::Import(i) => i.child_at_bx(index),
+            ParseNode::Export(i, _) => i.child_at_bx(index),
             _ => panic!(),
         }
     }
@@ -1188,6 +1195,86 @@ pub enum Literal {
     StructInitializer(TemplateInitializer),
     String(String, Range),
     SELF(Range),
+}
+
+impl FormatArgument for Literal {
+    fn supports_format(&self, spec: &Specifier) -> bool {
+        match self {
+            Self::Integer(_, _, _) => true,
+            Self::Boolean(_, _) => true,
+            Self::String(_, _) => true,
+            Self::Float(_, _) => match spec.format {
+                Format::Display | Format::Debug | Format::LowerExp | Format::UpperExp => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn fmt_display(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::Display::fmt(&val, f),
+            Self::Float(val, _) => fmt::Display::fmt(&val, f),
+            Self::Boolean(val, _) => fmt::Display::fmt(&val, f),
+            Self::String(val, _) => fmt::Display::fmt(&val, f),
+            _ => panic!(),
+        }
+    }
+
+    fn fmt_debug(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+
+    fn fmt_octal(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::Octal::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn fmt_lower_hex(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::LowerHex::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn fmt_upper_hex(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::UpperHex::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn fmt_binary(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::Binary::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn fmt_lower_exp(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::LowerExp::fmt(&val, f),
+            Self::Float(val, _) => fmt::LowerExp::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn fmt_upper_exp(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(val, _, _) => fmt::UpperExp::fmt(&val, f),
+            Self::Float(val, _) => fmt::UpperExp::fmt(&val, f),
+            _ => Err(fmt::Error),
+        }
+    }
+
+    fn to_usize(&self) -> Result<usize, ()> {
+        match self {
+            Self::Integer(val, _, _) => (*val).try_into().map_err(|_| ()),
+            _ => Err(()),
+        }
+    }
 }
 
 impl Literal {

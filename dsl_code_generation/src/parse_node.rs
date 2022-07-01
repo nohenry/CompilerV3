@@ -2,13 +2,16 @@ use std::collections::HashMap;
 
 use dsl_errors::{check, CodeGenError};
 use dsl_llvm::IRBuilder;
-use linked_hash_map::{Entry, LinkedHashMap};
+use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::LLVMGetParam;
 
 use crate::module::CodeGenPass;
-use dsl_lexer::ast::{
-    ActionDecleration, Expression, FunctionDecleration, FunctionSignature, FunctionType,
-    GenericParameters, ParseNode, TemplateDecleration, TypeSymbol, VariableDecleration,
+use dsl_lexer::{
+    ast::{
+        ActionDecleration, Expression, FunctionDecleration, FunctionSignature, GenericParameters,
+        ImportDecleration, ParseNode, TemplateDecleration, TypeSymbol, VariableDecleration,
+    },
+    Keyword, Token, TokenKind,
 };
 
 use super::module::Module;
@@ -19,6 +22,30 @@ impl Module {
         match node {
             ParseNode::Expression(e, _) => {
                 return self.gen_expression(e);
+            }
+            ParseNode::Export(b, _) => {
+                self.flags_to_apply
+                    .borrow_mut()
+                    .set(SymbolFlags::EXPORT, true);
+                return self.gen_parse_node(&b);
+            }
+            ParseNode::Import(ImportDecleration { path, .. }) => {
+                let pt: Option<Vec<String>> = path
+                    .iter()
+                    .map(|p| {
+                        if let Expression::Identifier(t) = p {
+                            Some(t.as_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if let Some(pt) = pt {
+                    self.imports.borrow_mut().push(pt);
+                } else {
+                    self.add_error("Invalid expression for import decleration!".into());
+                }
             }
             ParseNode::TemplateDecleration(TemplateDecleration {
                 fields,
@@ -196,7 +223,7 @@ impl Module {
                             pth.push(name.clone());
                             let template = check!(
                                 self.errors.borrow_mut(),
-                                self.builder.create_struct_named(&pth, &mng),
+                                self.builder.create_struct_named(&pth, None, &mng),
                                 Value
                             );
                             self.add_and_set_symbol(&name, SymbolValue::Template(template));
@@ -260,76 +287,72 @@ impl Module {
 
                     let name = tok.as_string();
                     let sym = &mut *self.symbol_root.borrow_mut();
-                    let mut ty = self.find_up_chain_mut(sym, &self.current_symbol.borrow(), &name);
-                    let Some(Entry::Occupied(occ)) = &mut ty else {
+                    let ty = self.find_up_chain_mut(sym, &self.current_symbol.borrow(), &name);
+                    let Some(fnd) = ty else {
                         // TODO: errors
                         return Value::Empty;
                     };
-                    let fnd = occ.get_mut();
-
-                    let generic =
-                        check!(self.errors.borrow_mut(), self.gen_generic(&generic), Value);
 
                     if let ParseNode::Expression(Expression::Block(st, _), _) = &**body {
                         for fun in st {
                             if let ParseNode::FunctionDecleration(func) = fun {
                                 let ngen = if let Some(fngen) = &func.generic {
-                                    let fngen = check!(
-                                        self.errors.borrow_mut(),
-                                        self.gen_generic(&fngen),
-                                        Value
-                                    );
-                                    // let ParseNode::GenericParameters(ps2) = &**fngen  else {
-                                    //     // TODO: errors
-                                    //     return Value::Empty;
-                                    // };
-                                    // if !ps1
-                                    //     .parameters
-                                    //     .iter()
-                                    //     .map(|f| &f.0)
-                                    //     .ne(ps1.parameters.iter().map(|f| &f.0))
-                                    // {
-                                    //     self.add_error("Generic parameter redefined!".into());
-                                    //     return Value::Empty;
-                                    // }
-                                    if !fngen.keys().ne(generic.keys()) {
+                                    let ParseNode::GenericParameters(ps2) = &**fngen  else {
+                                        // TODO: errors
+                                        return Value::Empty;
+                                    };
+                                    if !ps1
+                                        .parameters
+                                        .iter()
+                                        .map(|f| &f.0)
+                                        .ne(ps1.parameters.iter().map(|f| &f.0))
+                                    {
                                         self.add_error("Generic parameter redefined!".into());
                                         return Value::Empty;
                                     }
 
-                                    generic
-                                        .clone()
+                                    ps1.parameters
+                                        .to_vec()
                                         .into_iter()
-                                        .chain(fngen.into_iter())
+                                        .chain(ps2.parameters.to_vec().into_iter())
                                         .collect()
-
-                                    // ps1.parameters
-                                    //     .to_vec()
-                                    //     .into_iter()
-                                    //     .chain(ps2.parameters.to_vec().into_iter())
-                                    //     .collect()
                                 } else {
-                                    generic.clone()
-                                    // ps1.parameters.to_vec()
+                                    ps1.parameters.to_vec()
                                 };
-                                // let nfun = ParseNode::FunctionDecleration(FunctionDecleration {
-                                //     generic: Some(Box::new(ParseNode::GenericParameters(
-                                //         GenericParameters {
-                                //             parameters: ngen,
-                                //             range: ps1.range,
-                                //         },
-                                //     ))),
-                                //     ..func.clone()
-                                // });
 
-                                let name = func.identifier.as_string();
+                                let fngen = ParseNode::GenericParameters(GenericParameters {
+                                    parameters: ngen.clone(),
+                                    range: ps1.range,
+                                });
+                                let fngen = check!(
+                                    self.errors.borrow_mut(),
+                                    self.gen_generic(&fngen),
+                                    Value
+                                );
+
                                 let mut path = self.current_symbol.borrow().clone();
+                                path.push(name.clone());
+                                let name = func.identifier.as_string();
                                 path.push(name.clone());
 
                                 let mut i = func.function_type.parameters.clone().into_iter();
                                 let prms: Vec<TypeSymbol> = match i.next() {
                                     Some(f) => {
                                         if let dsl_lexer::ast::Type::ConstSelf = &f.symbol_type {
+                                            [TypeSymbol {
+                                                symbol: Token {
+                                                    token_type: TokenKind::Keyword(Keyword {
+                                                        keyword: dsl_lexer::KeywordKind::Const,
+                                                        range: f.symbol.range,
+                                                    }),
+                                                    range: f.symbol.range,
+                                                },
+                                                symbol_type: template_type.clone(),
+                                            }]
+                                            .into_iter()
+                                            .chain(i)
+                                            .collect()
+                                        } else if let dsl_lexer::ast::Type::SELF = &f.symbol_type {
                                             [TypeSymbol {
                                                 symbol: f.symbol.clone(),
                                                 symbol_type: template_type.clone(),
@@ -344,7 +367,7 @@ impl Module {
                                     None => i.collect(),
                                 };
 
-                                fnd.add_child(
+                                let sym = fnd.add_child(
                                     &name,
                                     SymbolValue::Funtion(Value::FunctionTemplate {
                                         body: func.body.clone(),
@@ -355,14 +378,32 @@ impl Module {
                                             parameters: prms,
                                             ..func.function_type.clone()
                                         },
-                                        ty_params: ngen,
+                                        ty_params: fngen,
                                     }),
                                 );
-                                // stmts.push(nfun);
+
+                                ngen.iter().for_each(|(ident, bounds, specs)| {
+                                    if let Some(_) = specs {
+                                    } else {
+                                        let bounds = if let Some(bounds) = bounds {
+                                            let bounds: Vec<_> =
+                                                bounds.iter().map(|b| self.gen_type(b)).collect();
+                                            Some(bounds)
+                                        } else {
+                                            None
+                                        };
+                                        sym.add_child(
+                                            &ident.as_string(),
+                                            SymbolValue::Generic(
+                                                Type::Empty,
+                                                GenericType::Generic(bounds),
+                                            ),
+                                        );
+                                    }
+                                });
                             }
                         }
                     }
-                    println!("{:?}", generic);
                 } else {
                     let temp = self.gen_type(template_type);
                     let Some(path)= temp.resolve_path() else {
@@ -432,7 +473,6 @@ impl Module {
                             self.builder.set_allocated_type(
                                 &mut alloc,
                                 self.module,
-                                &val,
                                 val.get_type()
                             ),
                             Value
@@ -449,7 +489,6 @@ impl Module {
                             self.builder.set_allocated_type(
                                 &mut alloc,
                                 self.module,
-                                &value,
                                 value.get_type()
                             ),
                             Value
@@ -602,7 +641,9 @@ impl Module {
                         let types: Option<Vec<(String, Type)>> = parameters
                             .iter()
                             .map(|f| {
-                                if &f.symbol.as_string() == "self" {
+                                if &f.symbol.as_string() == "self"
+                                    || &f.symbol.as_string() == "const self"
+                                {
                                     let sym = self.symbol_root.borrow();
                                     let current =
                                         self.get_symbol(&sym, &self.current_symbol.borrow());
@@ -884,14 +925,6 @@ impl Module {
             ParseNode::GenericParameters(GenericParameters { parameters, .. }) => {
                 parameters.iter().for_each(|(ident, bounds, specs)| {
                     if let Some(specs) = specs {
-                        // let ty = self.gen_type(specs);
-                        // c.add_child(
-                        //     ident.as_string(),
-                        //     SymbolValue::Generic(
-                        //         Type::Empty,
-                        //         GenericType::Specialization(ty),
-                        //     ),
-                        // )
                     } else {
                         let bounds = if let Some(bounds) = bounds {
                             let bounds: Vec<_> = bounds.iter().map(|b| self.gen_type(b)).collect();

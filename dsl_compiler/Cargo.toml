@@ -14,3 +14,5 @@ dsl_parser = { path="../dsl_parser" }
 dsl_lexer = { path="../dsl_lexer" }
 dsl_symbol = { path="../dsl_symbol" }
 llvm-sys = {path="../llvm-sys"}
+colored = "2"
+rt-format = "0.3.1"

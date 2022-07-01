@@ -1,6 +1,7 @@
 #![feature(linked_list_cursors)]
 #![feature(let_else)]
 use std::collections::{linked_list::Cursor, LinkedList};
+use std::ops::Index;
 
 use colored::{ColoredString, Colorize};
 use dsl_lexer::ast::{
@@ -20,6 +21,45 @@ pub struct Parser<'a> {
     tokens: Cursor<'a, &'a Token>,
     errors: Vec<ParseError>,
     ast: ParseNode,
+}
+
+pub struct TokenStream<'a> {
+    pub(self) tokens: &'a LinkedList<&'a Token>,
+    pub(self) range: std::ops::Range<usize>,
+}
+
+pub struct TokenStreamIter<'a> {
+    stream: TokenStream<'a>,
+    index: usize
+}
+
+impl <'a> Iterator for TokenStreamIter<'a> {
+    type Item = &'a Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.stream.range.end - self.stream.range.start  {
+            Some(self.stream[self.index])
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> TokenStream<'a> {
+    pub fn new(tokens: &'a LinkedList<&'a Token>, range: std::ops::Range<usize>) -> TokenStream<'a> {
+        TokenStream{
+            tokens,
+            range
+        }
+    }
+}
+
+impl <'a> Index<usize> for TokenStream<'a> {
+    type Output = &'a Token;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.tokens.iter().nth(index + self.range.start).unwrap()
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -119,6 +159,14 @@ impl<'a> Parser<'a> {
             Some(t) => match t.token_type {
                 TokenKind::OpenBracket => self.parse_tag(),
                 TokenKind::Keyword(k) => match k.keyword {
+                    KeywordKind::Export => {
+                        let tok = self.tokens.current().unwrap();
+                        self.tokens.move_next();
+
+                        let stmt = ptry!(self.parse_top_level_statement());
+
+                        Some(ParseNode::Export(Box::new(stmt), tok.range))
+                    }
                     KeywordKind::Import => {
                         let res = self.parse_import();
                         res
@@ -561,9 +609,17 @@ impl<'a> Parser<'a> {
             params.push(TypeSymbol {
                 symbol_type: Type::SELF,
                 symbol: (*tok).clone(),
-            })
+            });
+
+            match self.tokens.current() {
+                Some(t) => match t.token_type {
+                    TokenKind::Comma => self.tokens.move_next(),
+                    _ => (),
+                },
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
+            };
         } else if let Some(
-            tok @ Token {
+            Token {
                 token_type:
                     TokenKind::Keyword(Keyword {
                         keyword: KeywordKind::Const,
@@ -578,7 +634,15 @@ impl<'a> Parser<'a> {
             params.push(TypeSymbol {
                 symbol_type: Type::ConstSelf,
                 symbol: otok.clone(),
-            })
+            });
+
+            match self.tokens.current() {
+                Some(t) => match t.token_type {
+                    TokenKind::Comma => self.tokens.move_next(),
+                    _ => (),
+                },
+                None => return self.add_error(ParseError::new(&format!("Expected token!"))),
+            };
         }
 
         while let Some(_) = self.tokens.current() {
@@ -1296,7 +1360,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ident(&mut self) -> Option<Expression> {
-        let index = self.tokens.index();
         let possible_type = self.parse_type();
 
         if let Some(Token {

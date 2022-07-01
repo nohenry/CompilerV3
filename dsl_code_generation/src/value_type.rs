@@ -1,17 +1,12 @@
-use std::collections::HashMap;
-
 use dsl_errors::check;
-use dsl_symbol::{Symbol, SymbolValue, Value};
+use dsl_symbol::{Symbol, SymbolValue};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::core::{
-    LLVMArrayType, LLVMDoubleType, LLVMFloatType, LLVMFunctionType, LLVMInt1Type, LLVMInt32Type,
-    LLVMInt8Type, LLVMIntType, LLVMPointerType, LLVMVoidType,
+    LLVMArrayType, LLVMDoubleType, LLVMFloatType, LLVMFunctionType, LLVMInt1Type, LLVMInt8Type,
+    LLVMIntType, LLVMPointerType, LLVMVoidType,
 };
 
-use dsl_lexer::ast::{
-    ArrayInitializer, ArrayType, Expression, FunctionType, GenericType, Literal, ReferenceType,
-    Type,
-};
+use dsl_lexer::ast::{ArrayType, FunctionType, GenericType, ReferenceType, Type};
 
 use super::module::Module;
 
@@ -133,6 +128,7 @@ impl Module {
                 if let Some(Symbol { value, .. }) =
                     self.find_up_chain(&sym, &self.current_symbol.borrow(), &str)
                 {
+                    let value = value;
                     match value {
                         SymbolValue::Template(ty) => return ty.clone(),
                         SymbolValue::Action(ty) => return ty.clone(),
@@ -179,7 +175,7 @@ impl Module {
                                 match &mut sym.value {
                                     SymbolValue::Generic(ty, _) => {
                                         *ty = p.clone();
-                                        fn_types.push(ty.to_string())
+                                        fn_types.push(p.clone())
                                     }
                                     _ => (),
                                 }
@@ -194,10 +190,12 @@ impl Module {
                     }
                 }
 
+                let fn_types_str: Vec<String> = fn_types.iter().map(|f| f.to_string()).collect();
+
                 let mut vars = LinkedHashMap::new();
 
                 let specialization = specialization.iter().find(|(f, _)| {
-                    for (a, b) in f.iter().zip(fn_types.iter()) {
+                    for (a, b) in f.iter().zip(fn_types_str.iter()) {
                         if a == "" {
                             return true;
                         } else if a != b {
@@ -208,7 +206,7 @@ impl Module {
                     }
                     true
                 });
-                let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
+                let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types_str);
 
                 let name = if let Some(last) = path.last() {
                     if let Some(ty) = existing_impl {
@@ -224,6 +222,7 @@ impl Module {
                             None
                         }
                     } else {
+                        let base = path.clone();
                         let path = &path[..path.len() - 1];
                         let name = self.get_next_name(path, last.clone());
                         let (template, name) = {
@@ -267,7 +266,12 @@ impl Module {
                             use dsl_symbol::Type;
                             let template = check!(
                                 self.errors.borrow_mut(),
-                                self.builder.create_struct(&tyep, &mng, vars.clone()),
+                                self.builder.create_struct(
+                                    tyep,
+                                    Some((base, fn_types.to_vec())),
+                                    &mng,
+                                    vars.clone()
+                                ),
                                 Type
                             );
 
@@ -305,7 +309,7 @@ impl Module {
                     }) = tmpl_templ
                     {
                         if existing_impl.is_none() {
-                            existing.insert(fn_types, npath.clone());
+                            existing.insert(fn_types_str, npath.clone());
                         }
                     }
 
@@ -316,50 +320,6 @@ impl Module {
             }
             c => {
                 self.add_error(format!("Unsupported type {:?}", c));
-                dsl_symbol::Type::Empty
-            }
-        }
-    }
-
-    pub(super) fn gen_literal_type(&self, literal: &Literal) -> dsl_symbol::Type {
-        match literal {
-            Literal::Integer(..) => dsl_symbol::Type::Integer {
-                llvm_type: unsafe { LLVMInt32Type() },
-                signed: false,
-            },
-            Literal::Float(..) => dsl_symbol::Type::Float {
-                llvm_type: unsafe { LLVMFloatType() },
-            },
-            Literal::Boolean(..) => dsl_symbol::Type::Boolean {
-                llvm_type: unsafe { LLVMInt1Type() },
-            },
-            Literal::Array(ArrayInitializer { elements, .. }) => {
-                let ttype = self.gen_node_type(&elements[0], false);
-                let array_type = unsafe { LLVMArrayType(ttype.get_type(), elements.len() as _) };
-
-                dsl_symbol::Type::Array {
-                    llvm_type: array_type,
-                    base_type: Box::new(ttype),
-                }
-            }
-            _ => {
-                self.add_error(String::from("Unable to generate type from expression"));
-                dsl_symbol::Type::Empty
-            }
-        }
-    }
-
-    pub(super) fn gen_node_type(
-        &self,
-        expression: &Expression,
-        supress_error: bool,
-    ) -> dsl_symbol::Type {
-        match expression {
-            Expression::Literal(literal) => self.gen_literal_type(literal),
-            _ => {
-                if !supress_error {
-                    self.add_error(String::from("Unable to generate type from expression"));
-                }
                 dsl_symbol::Type::Empty
             }
         }

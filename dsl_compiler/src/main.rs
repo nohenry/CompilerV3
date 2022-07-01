@@ -1,19 +1,20 @@
 #![feature(linked_list_cursors)]
 #![feature(extern_types)]
 #![feature(crate_visibility_modifier)]
+#![feature(let_else)]
+
 use std::{
     cell::RefCell,
     collections::LinkedList,
     ffi::{CStr, CString},
-    fmt::format,
     fs,
     os::raw::c_char,
     path::Path,
     rc::Rc,
 };
 
-use dsl_llvm::IRBuilder;
-use dsl_symbol::{Symbol, SymbolValue};
+use dsl_code_generation::module::{CodeGenPass, Module};
+use dsl_symbol::Symbol;
 use llvm_sys::{
     bit_writer::LLVMWriteBitcodeToFile,
     core::{LLVMModuleCreateWithName, LLVMPrintModuleToFile},
@@ -29,6 +30,8 @@ use llvm_sys::{
 };
 
 use dsl_util::{c_str, TreeDisplay};
+
+mod builtins;
 
 fn create_target_machine() -> LLVMTargetMachineRef {
     unsafe {
@@ -128,7 +131,43 @@ fn emit(
     }
 }
 
-fn main() {
+fn compile_file(
+    contents: &String,
+    module_name: &String,
+    module: LLVMModuleRef,
+    symbols: Rc<RefCell<Symbol>>,
+) -> Module {
+    let tokens = dsl_lexer::lex(&contents).unwrap();
+    let mut ltokens = LinkedList::new();
+    for tok in &tokens {
+        ltokens.push_back(tok);
+    }
+
+    let parser = dsl_parser::Parser::parse_from_tokens(&ltokens);
+    parser.print_errors();
+
+    let ast = parser.get_ast();
+    println!("{}", ast.format());
+
+    let module = dsl_code_generation::module::Module::new(
+        &module_name.to_string(),
+        Box::new(ast.clone()),
+        module,
+        symbols,
+    );
+
+    module
+}
+
+fn gen_files_pass(files: &Vec<Option<Module>>, pass: CodeGenPass) {
+    for file in files {
+        if let Some(file) = file {
+            file.gen_pass(pass);
+        }
+    }
+}
+
+fn main() -> std::io::Result<()> {
     let target_machine = unsafe {
         LLVM_InitializeAllTargets();
         LLVM_InitializeAllTargetMCs();
@@ -138,87 +177,94 @@ fn main() {
         create_target_machine()
     };
 
-    let mut symbols = Symbol::root();
+    let symbols = Symbol::root();
 
-    let core = symbols.add_child(&"core", SymbolValue::Module);
-    for i in [8, 16, 32, 64] {
-        core.add_child(
-            &format!("int{}", i),
-            SymbolValue::Primitive(IRBuilder::get_int(i)),
-        );
-        core.add_child(
-            &format!("uint{}", i),
-            SymbolValue::Primitive(IRBuilder::get_uint(i)),
-        );
-    }
-    core.add_child(
-        &format!("bool"),
-        SymbolValue::Primitive(IRBuilder::get_bool()),
-    );
-
-    core.add_child(
-        &format!("char"),
-        SymbolValue::Primitive(IRBuilder::get_uint_8()),
-    );
-
-    core.add_child(
-        &format!("float32"),
-        SymbolValue::Primitive(IRBuilder::get_float32()),
-    );
-    core.add_child(
-        &format!("float64"),
-        SymbolValue::Primitive(IRBuilder::get_float64()),
-    );
-
-    let path = Path::new("test/test.dsl");
-
-    let contents = fs::read_to_string(path).expect("Unable to read file!");
-
-    let tokens = dsl_lexer::lex(&contents).unwrap();
-    let mut ltokens = LinkedList::new();
-    for tok in &tokens {
-        ltokens.push_back(tok);
-    }
-
-    let parser = dsl_parser::Parser::parse_from_tokens(&ltokens);
-    let ast = parser.get_ast();
-    println!("{}", ast.format());
-
-    let name = CString::new(path.to_str().unwrap()).expect("Unable to create model name");
+    let module = unsafe { LLVMModuleCreateWithName(CString::new("test")?.as_ptr() as *const i8) };
 
     let symbols = Rc::new(RefCell::new(symbols));
 
-    let module_name = path.file_stem().unwrap().to_str().unwrap();
-    unsafe {
-        let module = LLVMModuleCreateWithName(module_name.as_ptr() as *const i8);
-        let name = module_name.to_string();
+    let path = Path::new("test");
 
-        let module = dsl_code_generation::module::Module::new(
-            &name,
-            Box::new(ast.clone()),
-            module,
-            symbols.clone(),
-        );
+    let files: Vec<Option<Module>> = path
+        .read_dir()?
+        .map(|file| {
+            let Ok(file) = file else {
+            return None;
+        };
+            let Ok(ty) = file.file_type() else {
+            return None;
+        };
+            if ty.is_file() {
+                if let Some(p) = file.path().extension() {
+                    if p != "dsl" {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+                let path = file.path();
 
-        module.gen();
+                let contents = fs::read_to_string(&path).expect("Unable to read file!");
+                let module_name = path.file_stem().unwrap().to_str().unwrap();
 
-        parser.print_errors();
+                return Some(compile_file(
+                    &contents,
+                    &module_name.to_string(),
+                    module,
+                    symbols.clone(),
+                ));
+            }
+            None
+        })
+        .collect();
 
-        let sym = symbols.borrow();
-        println!("{}", sym.format());
+    let core_module = files
+        .iter()
+        .filter_map(|f| f.as_ref())
+        .find(|f| f.get_name() == "core");
 
-        let filename = path.file_name().unwrap();
-        emit(
-            module.get_module(),
-            target_machine,
-            Path::new(filename.to_str().unwrap()),
-            EmitType::IR,
-        );
-        emit(
-            module.get_module(),
-            target_machine,
-            Path::new(filename.to_str().unwrap()),
-            EmitType::Object,
-        );
+    if let Some(core) = core_module {
+        core.gen_core();
     }
+
+    if let Some(s) = symbols.borrow_mut().children.get_mut("core") {
+        builtins::add_builtins(s);
+    }
+
+    gen_files_pass(&files, CodeGenPass::TemplateSymbols);
+    gen_files_pass(&files, CodeGenPass::TemplateSpecialization);
+    gen_files_pass(&files, CodeGenPass::TemplateValues);
+
+    gen_files_pass(&files, CodeGenPass::Symbols);
+    gen_files_pass(&files, CodeGenPass::SymbolsSpecialization);
+    gen_files_pass(&files, CodeGenPass::Values);
+
+    for file in &files {
+        if let Some(file) = file {
+            file.print_errors()
+        }
+    }
+
+    if let Some(core) = core_module {
+        core.gen_main_fn();
+    }
+
+    let sym = symbols.borrow();
+    println!("{}", sym.format());
+
+    let filename = path.file_name().unwrap();
+    emit(
+        module,
+        target_machine,
+        Path::new(filename.to_str().unwrap()),
+        EmitType::IR,
+    );
+    emit(
+        module,
+        target_machine,
+        Path::new(filename.to_str().unwrap()),
+        EmitType::Object,
+    );
+
+    Ok(())
 }

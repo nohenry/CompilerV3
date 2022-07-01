@@ -1,15 +1,21 @@
-; ModuleID = 'test.dslUnable to read file!'
-source_filename = "test.dslUnable to read file!"
+; ModuleID = 'test'
+source_filename = "test"
 
-%test-Data1 = type { i32 }
+%core-List = type { i32 }
+
+@0 = private unnamed_addr constant [7 x i8] c"Poop 7\00", align 1
 
 declare void @printf(i8*)
 
-define void @test-main(i32 %0) {
-  %2 = alloca i32, align 4
-  store i32 %0, i32* %2, align 4
-  %3 = alloca %test-Data1, align 8
-  %4 = getelementptr inbounds %test-Data1, %test-Data1* %3, i32 0, i32 0
-  store i32 9, i32* %4, align 4
+define void @test-main() {
+  %1 = alloca %core-List, align 8
+  %2 = getelementptr inbounds %core-List, %core-List* %1, i32 0, i32 0
+  store i32 7, i32* %2, align 4
+  call void @printf(i8* getelementptr inbounds ([7 x i8], [7 x i8]* @0, i32 0, i32 0))
+  ret void
+}
+
+define void @main() {
+  call void @test-main()
   ret void
 }

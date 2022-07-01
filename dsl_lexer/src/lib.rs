@@ -239,6 +239,10 @@ impl Token {
                 keyword: KeywordKind::SELF,
                 ..
             }) => "self".to_string(),
+            TokenKind::Keyword(Keyword {
+                keyword: KeywordKind::Const,
+                ..
+            }) => "const self".to_string(),
             _ => panic!("Not an identifier!"),
         }
     }
@@ -341,34 +345,6 @@ impl<'a> TokenIterator<'a> {
     pub fn peek(&mut self) -> Option<&<TokenIterator<'a> as Iterator>::Item> {
         let iter = &mut self.iter;
         self.peeked.get_or_insert_with(|| iter.next()).as_ref()
-    }
-
-    pub fn peek_mut(&mut self) -> Option<&mut <TokenIterator<'a> as Iterator>::Item> {
-        let iter = &mut self.iter;
-        self.peeked.get_or_insert_with(|| iter.next()).as_mut()
-    }
-
-    pub fn next_if(
-        &mut self,
-        func: impl FnOnce(&<TokenIterator<'a> as Iterator>::Item) -> bool,
-    ) -> Option<<TokenIterator<'a> as Iterator>::Item> {
-        match self.next() {
-            Some(matched) if func(&matched) => Some(matched),
-            other => {
-                // Since we called `self.next()`, we consumed `self.peeked`.
-                assert!(self.peeked.is_none());
-                self.peeked = Some(other);
-                None
-            }
-        }
-    }
-
-    pub fn next_if_eq<T>(&mut self, expected: &T) -> Option<<TokenIterator<'a> as Iterator>::Item>
-    where
-        T: ?Sized,
-        <TokenIterator<'a> as Iterator>::Item: PartialEq<T>,
-    {
-        self.next_if(|next| next == expected)
     }
 }
 

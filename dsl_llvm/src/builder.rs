@@ -8,9 +8,9 @@ use llvm_sys::{
     core::{
         LLVMAddFunction, LLVMAddIncoming, LLVMAppendBasicBlock, LLVMAppendExistingBasicBlock,
         LLVMBuildAlloca, LLVMBuildBinOp, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2,
-        LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildLoad2,
-        LLVMBuildMemCpy, LLVMBuildNeg, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
-        LLVMBuildSelect, LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
+        LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildMemCpy,
+        LLVMBuildNeg, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSelect,
+        LLVMBuildStore, LLVMBuildStructGEP2, LLVMConstInt, LLVMConstReal,
         LLVMCreateBasicBlockInContext, LLVMDoubleType, LLVMFloatType, LLVMFunctionType,
         LLVMGetGlobalContext, LLVMInt16Type, LLVMInt1Type, LLVMInt32Type, LLVMInt64Type,
         LLVMInt8Type, LLVMIntType, LLVMIsConstant, LLVMPointerType, LLVMPositionBuilder,
@@ -252,11 +252,7 @@ impl IRBuilder {
                     let llvm_value = unsafe { LLVMBuildStore(self.builder, *rvalue, *ptr_value) };
                     Ok(Value::Instruction { llvm_value })
                 }
-                var @ Value::Variable {
-                    llvm_value,
-                    variable_type,
-                    constant,
-                } => {
+                var @ Value::Variable { .. } => {
                     let load = self.create_aligned_load(var)?.get_raw_value()?;
 
                     let llvm_value = unsafe { LLVMBuildStore(self.builder, load, *ptr_value) };
@@ -313,7 +309,7 @@ impl IRBuilder {
             Value::Variable {
                 llvm_value: ptr_value,
                 variable_type,
-                constant,
+                ..
             } => {
                 let align = self.get_data_layout().get_preferred_align(variable_type);
                 let value = unsafe {
@@ -342,11 +338,7 @@ impl IRBuilder {
 
     pub fn create_neg(&self, value: &Value) -> Result<Value, CodeGenError> {
         match value {
-            var @ Value::Variable {
-                llvm_value,
-                variable_type,
-                constant,
-            } => {
+            var @ Value::Variable { variable_type, .. } => {
                 let value = self.create_aligned_load(var)?.get_raw_value()?;
                 let value = unsafe { LLVMBuildNeg(self.builder, value, NULL_STR) };
                 Ok(Value::Literal {
@@ -386,11 +378,7 @@ impl IRBuilder {
     ) -> Result<Value, CodeGenError> {
         match (left, right) {
             (
-                var @ Value::Variable {
-                    llvm_value: lvalue,
-                    variable_type,
-                    constant,
-                },
+                var @ Value::Variable { variable_type, .. },
                 Value::Literal {
                     llvm_value: rvalue, ..
                 },
@@ -405,15 +393,10 @@ impl IRBuilder {
             }
             (
                 lvar @ Value::Variable {
-                    llvm_value: lvalue,
                     variable_type: ltype,
                     ..
                 },
-                rvar @ Value::Variable {
-                    llvm_value: rvalue,
-                    variable_type: rtype,
-                    ..
-                },
+                rvar @ Value::Variable { .. },
             ) => {
                 let lvalue = self.create_aligned_load(lvar)?.get_raw_value()?;
                 let rvalue = self.create_aligned_load(rvar)?.get_raw_value()?;
@@ -457,7 +440,6 @@ impl IRBuilder {
             }
             (
                 var @ Value::Variable {
-                    llvm_value: lvalue,
                     variable_type,
                     ..
                 },
@@ -475,13 +457,10 @@ impl IRBuilder {
             }
             (
                 lvar @ Value::Variable {
-                    llvm_value: lvalue,
                     variable_type: ltype,
                     ..
                 },
                 rvar @ Value::Variable {
-                    llvm_value: rvalue,
-                    variable_type: rtype,
                     ..
                 },
             ) => {
@@ -511,7 +490,6 @@ impl IRBuilder {
         match (left, right) {
             (
                 lvar @ Value::Variable {
-                    llvm_value: lvalue,
                     variable_type,
                     ..
                 },
@@ -529,13 +507,10 @@ impl IRBuilder {
             }
             (
                 lvar @ Value::Variable {
-                    llvm_value: lvalue,
                     variable_type: ltype,
                     ..
                 },
                 rvar @ Value::Variable {
-                    llvm_value: rvalue,
-                    variable_type: rtype,
                     ..
                 },
             ) => {
@@ -606,8 +581,6 @@ impl IRBuilder {
         index: u32,
     ) -> Result<Value, CodeGenError> {
         let ptr = ptr.resolve_base_value(self.builder);
-        println!("{}", ptr.llvm_string());
-        println!("{}", ptr.get_type().llvm_string());
         match ptr {
             Value::Load {
                 llvm_value,
@@ -783,7 +756,10 @@ impl IRBuilder {
                     },
                 var,
             } => {
-                args.push(var.get_ptr(self.module));
+                args = [var.get_ptr(self.module)]
+                    .into_iter()
+                    .chain(args.into_iter())
+                    .collect();
                 gen(
                     &args,
                     parameters,
@@ -870,8 +846,6 @@ impl IRBuilder {
 
                 let a_node = match &a {
                     var @ Value::Variable {
-                        llvm_value,
-                        variable_type,
                         ..
                     } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
@@ -886,8 +860,6 @@ impl IRBuilder {
 
                 let b_node = match &b {
                     var @ Value::Variable {
-                        llvm_value,
-                        variable_type,
                         ..
                     } => self.create_aligned_load(var)?.get_raw_value()?,
                     Value::Literal { llvm_value, .. } => *llvm_value,
@@ -1013,8 +985,6 @@ impl IRBuilder {
                 llvm_value: unsafe { LLVMBuildRet(self.builder, *llvm_value) },
             }),
             var @ Value::Variable {
-                llvm_value,
-                variable_type,
                 ..
             } => {
                 let ld = self.create_aligned_load(var)?.get_raw_value()?;
@@ -1054,6 +1024,7 @@ impl IRBuilder {
     pub fn create_struct_named(
         &self,
         path: &[String],
+        generic: Option<(Vec<String>, Vec<Type>)>,
         name: &String,
     ) -> Result<Type, CodeGenError> {
         let name = CString::new(name.as_str()).unwrap();
@@ -1064,6 +1035,7 @@ impl IRBuilder {
             llvm_type: value,
             fields: LinkedHashMap::new(),
             path: Vec::from(path),
+            base_template: generic,
         })
     }
 
@@ -1091,7 +1063,8 @@ impl IRBuilder {
 
     pub fn create_struct(
         &self,
-        path: &[String],
+        path: Vec<String>,
+        generic: Option<(Vec<String>, Vec<Type>)>,
         name: &String,
         fields: LinkedHashMap<String, Type>,
     ) -> Result<Type, CodeGenError> {
@@ -1114,7 +1087,8 @@ impl IRBuilder {
         Ok(Type::Template {
             llvm_type: value,
             fields,
-            path: Vec::from(path),
+            path,
+            base_template: generic,
         })
     }
 
@@ -1162,7 +1136,6 @@ impl IRBuilder {
         &self,
         alloc: &mut Value,
         module: LLVMModuleRef,
-        src: &Value,
         ty: &Type,
     ) -> Result<(), CodeGenError> {
         match alloc {

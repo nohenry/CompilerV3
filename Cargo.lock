@@ -95,6 +95,7 @@ dependencies = [
 name = "dsl_compiler"
 version = "0.1.0"
 dependencies = [
+ "colored",
  "dsl_code_generation",
  "dsl_lexer",
  "dsl_llvm",
@@ -102,6 +103,7 @@ dependencies = [
  "dsl_symbol",
  "dsl_util",
  "llvm-sys",
+ "rt-format",
 ]
 
 [[package]]
@@ -118,6 +120,7 @@ dependencies = [
  "dsl_trie",
  "dsl_util",
  "lazy_static",
+ "rt-format",
 ]
 
 [[package]]
@@ -305,6 +308,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "rt-format"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45087cee619d316fa4bd1675494acff4a5eaa0892fa53bc364bd246f13e452e2"
+dependencies = [
+ "lazy_static",
+ "regex",
 ]
 
 [[package]]

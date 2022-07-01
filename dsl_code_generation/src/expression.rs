@@ -74,12 +74,6 @@ impl Module {
                                 match c {
                                     // Handle membor access
                                     OperatorKind::Dot => {
-                                        let mut root_ch = self.symbol_root.borrow();
-                                        let current = self.get_symbol(
-                                            &mut root_ch,
-                                            &self.current_symbol.borrow(),
-                                        );
-
                                         fn trav<'a>(
                                             arr: &mut Vec<Traversal>,
                                             b: &BinaryExpression,
@@ -156,6 +150,21 @@ impl Module {
                                             };
                                             let mut var = var.clone();
                                             let mut sym = sym;
+                                            let base = if let SymbolValue::Template(
+                                                Type::Template {
+                                                    base_template: Some(base),
+                                                    ..
+                                                },
+                                            ) = &sym.value
+                                            {
+                                                let Some(sym) = self.get_symbol(&root_sym, &base.0) else {
+                                                    self.add_error("Unable to resolve base type for generic template!".into());
+                                                    return Value::Empty
+                                                };
+                                                Some(sym)
+                                            } else {
+                                                None
+                                            };
                                             // let mut fields = &sym.children;
                                             for m in citer {
                                                 let Traversal::Ident(m) = m else {
@@ -206,6 +215,23 @@ impl Module {
 
                                                         _ => (),
                                                     }
+                                                } else if let Some(base) = base {
+                                                    if let Some(child) = base.children.get(m) {
+                                                        match &child.value {
+                                                            SymbolValue::Funtion(
+                                                                func @ (Value::Function { .. }
+                                                                | Value::FunctionTemplate {
+                                                                    ..
+                                                                }),
+                                                            ) => {
+                                                                return Value::MemberFunction {
+                                                                    func: Box::new(func.clone()),
+                                                                    var: Box::new(var),
+                                                                };
+                                                            }
+                                                            _ => (),
+                                                        }
+                                                    }
                                                 }
                                                 return var;
                                             }
@@ -224,10 +250,10 @@ impl Module {
 
                                                 match &sym.value {
                                                     SymbolValue::Variable(
-                                                        var @ Value::Variable {
-                                                            variable_type, ..
-                                                        },
-                                                    ) => return (find_syms)(var),
+                                                        var @ Value::Variable { .. },
+                                                    ) => {
+                                                        return (find_syms)(var);
+                                                    }
                                                     _ => (),
                                                 }
                                             }
@@ -453,13 +479,18 @@ impl Module {
             Expression::Identifier(i) => {
                 let str = i.as_string();
 
-                let sym = self.symbol_root.borrow();
-                let sym = self.find_up_chain(&sym, &self.current_symbol.borrow(), &str);
+                let root = self.symbol_root.borrow();
+                let sym = self.find_up_chain(&root, &self.current_symbol.borrow(), &str);
 
                 if let Some(sym) = sym {
                     match &sym.value {
                         SymbolValue::Variable(v) => v.clone(),
                         SymbolValue::Funtion(v) => v.clone(),
+                        SymbolValue::Macro(_) => {
+                            let path =
+                                self.find_path_up_chain(&root, &self.current_symbol.borrow(), &str);
+                            Value::Path { path }
+                        }
                         _ => Value::Empty,
                     }
                 } else {
@@ -738,14 +769,27 @@ impl Module {
                 }
             },
             Expression::FunctionCall(FunctionCall {
-                arguments,
+                arguments: fargs,
                 expression_to_call,
                 generic,
                 ..
             }) => {
-                let arguments: Vec<_> = arguments.iter().map(|f| self.gen_expression(f)).collect();
                 let expr = self.gen_expression(&expression_to_call);
-                if let Value::FunctionTemplate {
+                if let Value::Path { path } = &expr {
+                    let mut sym = self.symbol_root.borrow();
+                    let current = self.get_symbol(&mut sym, &path);
+
+                    if let Some(Symbol {
+                        value: SymbolValue::Macro(m),
+                        ..
+                    }) = current
+                    {
+                        let node = (m)(fargs);
+                        self.gen_parse_node(&node)
+                    } else {
+                        Value::Empty
+                    }
+                } else if let Value::FunctionTemplate {
                     body,
                     path,
                     ty,
@@ -754,6 +798,7 @@ impl Module {
                     specialization,
                 } = &expr
                 {
+                    let arguments: Vec<_> = fargs.iter().map(|f| self.gen_expression(f)).collect();
                     let old_block = self.current_block.take();
 
                     let old_symbol = self.current_symbol.take();
@@ -846,11 +891,7 @@ impl Module {
                                     // FIXME: idk check if three of these are really needed
                                     if let Some(Symbol {
                                         value:
-                                            SymbolValue::Funtion(Value::FunctionTemplate {
-                                                body,
-                                                ty,
-                                                ..
-                                            }),
+                                            SymbolValue::Funtion(Value::FunctionTemplate { ty, .. }),
                                         ..
                                     }) = current
                                     {
@@ -869,7 +910,9 @@ impl Module {
                                     .parameters
                                     .iter()
                                     .map(|f| {
-                                        if &f.symbol.as_string() == "self" {
+                                        if &f.symbol.as_string() == "self"
+                                            || &f.symbol.as_string() == "const self"
+                                        {
                                             let sym = self.symbol_root.borrow();
                                             let current = self
                                                 .get_symbol(&sym, &self.current_symbol.borrow());
@@ -970,7 +1013,7 @@ impl Module {
                                     .get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
 
                                 if let Some(c) = current {
-                                    for ((name, ty), alloc) in types.iter().zip(pallocs.into_iter())
+                                    for ((name, _ty), alloc) in types.iter().zip(pallocs.into_iter())
                                     {
                                         c.add_child(&name, SymbolValue::Variable(alloc));
                                     }
@@ -993,7 +1036,375 @@ impl Module {
                                 if let Some(Symbol {
                                     value:
                                         SymbolValue::Funtion(Value::FunctionTemplate {
-                                            body, ty, ..
+                                            body,  ..
+                                        }),
+                                    ..
+                                }) = current
+                                {
+                                    self.gen_parse_node(body.as_ref())
+                                } else {
+                                    self.gen_parse_node(body.as_ref())
+                                }
+                            } else {
+                                self.gen_parse_node(body.as_ref())
+                            };
+
+                            if let Some(alloc) = alloc {
+                                if val.has_value() {
+                                    check!(
+                                        self.errors.borrow_mut(),
+                                        self.builder.create_store(&alloc, &val, self.module),
+                                        Value
+                                    );
+                                }
+
+                                check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.create_ret(&alloc),
+                                    Value
+                                );
+                            } else {
+                                self.builder.create_ret_void();
+                            }
+
+                            Some(name)
+                        }
+                    } else {
+                        None
+                    };
+
+                    self.current_block.replace(old_block);
+                    self.current_symbol.replace(old_symbol);
+                    self.current_function.replace(old_function);
+
+                    self.builder.set_position_end(&self.current_block.borrow());
+
+                    if let Some(name) = name {
+                        let mut npath = Vec::from(&path[..path.len() - 1]);
+                        npath.push(name);
+
+                        let mut sym = self.symbol_root.borrow_mut();
+
+                        // let mut sym = self.symbol_root.borrow_mut();
+                        let fn_templ = self.get_symbol_mut(&mut sym, &path);
+                        if let Some(Symbol {
+                            value: SymbolValue::Funtion(Value::FunctionTemplate { existing, .. }),
+                            ..
+                        }) = fn_templ
+                        {
+                            existing.insert(fn_types, npath.clone());
+                        }
+
+                        let current = self.get_symbol(&mut sym, &npath);
+                        if let Some(Symbol {
+                            value: SymbolValue::Funtion(val),
+                            ..
+                        }) = current
+                        {
+                            check!(
+                                self.errors.borrow_mut(),
+                                self.builder.create_fn_call(val, arguments),
+                                Value
+                            )
+                        } else {
+                            Value::Empty
+                        }
+                    } else {
+                        Value::Empty
+                    }
+                } else if let Value::MemberFunction {
+                    func:
+                        box Value::FunctionTemplate {
+                            body,
+                            path,
+                            ty,
+                            ty_params,
+                            existing,
+                            specialization,
+                        },
+                    var,
+                } = &expr
+                {
+                    let arguments: Vec<_> = fargs.iter().map(|f| self.gen_expression(f)).collect();
+                    let old_block = self.current_block.take();
+
+                    let old_symbol = self.current_symbol.take();
+                    let old_function = self.current_function.take();
+                    self.current_symbol.replace(path.clone());
+
+                    let mut fn_types = vec![];
+
+                    let mut arguments = arguments;
+                    // Generate type arguments
+                    {
+                        let mut sym = self.symbol_root.borrow_mut();
+                        let current = self.get_symbol_mut(&mut sym, &self.current_symbol.borrow());
+
+                        if let Some(current) = current {
+                            let mut gens = generic
+                                .as_ref()
+                                .map_or(Some([].iter()), |f| Some(f.iter()))
+                                .unwrap();
+                            let mut pram_iter = ty_params.iter();
+
+                            while let Some(p) = gens.next() {
+                                let Some((name, bounds)) = pram_iter.next() else {
+                                    self.add_error(format!("Extra generic parameter in function call!"));
+                                    break;
+                                };
+                                if let Some(sym) = current.children.get_mut(name) {
+                                    match &mut sym.value {
+                                        SymbolValue::Generic(ty, _) => {
+                                            *ty = self.gen_type(p);
+                                            fn_types.push(ty.to_string())
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            }
+
+                            let p: Option<()> = pram_iter.map(|(name, bounds)| {
+                                fn find(f: &dsl_lexer::ast::Type, name: &String) -> bool {
+                                    match f {
+                                        dsl_lexer::ast::Type::NamedType(t) => {
+                                            if &t.as_string() == name {
+                                                return true;
+                                            }
+                                        },
+                                        dsl_lexer::ast::Type::GenericType(t) => {
+                                           if let Some(_)  =t.arguments.iter().find(|f| find(f, name)) {
+                                               return true;
+                                           }
+                                        }
+                                        _ => return false
+                                    }
+                                    return false;
+                                }
+                                let found = ty.parameters.iter().position(|f|
+                                    find(&f.symbol_type, name)
+                                );
+                                if let Some(pos) = found {
+                                    let pt = &ty.parameters[pos];
+                                    if let Some(sym) = current.children.get_mut(name) {
+                                        match &mut sym.value {
+                                            SymbolValue::Generic(gty, _) => {
+                                                if let dsl_lexer::ast::Type::GenericType(gen) = &pt.symbol_type {
+                                                    if pt.symbol.as_string() == "self" || pt.symbol.as_string() == "const self" {
+
+                                                        let found = gen.arguments.iter().position(|f|
+                                                            find(&f, name)
+                                                        ).unwrap();
+
+                                                        if let Value::Variable {variable_type: Type::Template {base_template: Some((_, tys)), ..}, constant, ..} = &**var {
+                                                            *gty = tys[found].clone();
+                                                            fn_types.push(gty.to_string());
+
+                                                            arguments = [
+                                                                var.get_ptr(self.module)
+                                                            ].into_iter().chain(arguments.clone().into_iter()).collect();
+
+                                                            if *constant && pt.symbol.as_string() == "self" {
+                                                                self.add_error("Variable is constant while member function is mutable! Consider chaning const self to self!".into());
+                                                                return None
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    *gty = arguments[pos].get_type().clone();
+                                                    fn_types.push(gty.to_string())
+                                                }
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                } else {
+                                    self.add_error(format!(
+                                        "Unable to determine type for generic paramater: `{}` -- Please provide type parameter",
+                                        name
+                                    ));
+                                    return None
+                                }
+                                Some(())
+                            }).collect();
+                            if p.is_none() {
+                                return Value::Empty;
+                            }
+                        }
+                    }
+
+                    let specialization = specialization.iter().find(|(f, _)| {
+                        for (a, b) in f.iter().zip(fn_types.iter()) {
+                            if a == "" {
+                                return true;
+                            } else if a != b {
+                                return false;
+                            } else {
+                                return true;
+                            }
+                        }
+                        true
+                    });
+                    let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
+
+                    let name = if let Some(last) = path.last() {
+                        if let Some(ty) = existing_impl {
+                            Some(ty.1.last().unwrap().clone())
+                        } else {
+                            let (return_type, types) = {
+                                let sym = self.symbol_root.borrow();
+
+                                let typ = if let Some(special) = specialization {
+                                    let current = self.get_symbol(&sym, &special.1);
+
+                                    // FIXME: idk check if three of these are really needed
+                                    if let Some(Symbol {
+                                        value:
+                                            SymbolValue::Funtion(Value::FunctionTemplate {
+                                                ty,
+                                                ..
+                                            }),
+                                        ..
+                                    }) = current
+                                    {
+                                        Some(ty)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                let ty = if let Some(ty) = typ { ty } else { ty };
+                                let return_type = self.gen_type(&ty.return_type);
+
+                                let types: Option<Vec<(String, Type)>> = ty
+                                    .parameters
+                                    .iter()
+                                    .map(|f| {
+                                        if &f.symbol.as_string() == "self"
+                                            || &f.symbol.as_string() == "const self"
+                                        {
+                                            // let sym = self.symbol_root.borrow();
+                                            // let current = self.get_symbol(&sym, &path);
+
+                                            if let Value::Variable {
+                                                variable_type,
+                                                constant,
+                                                ..
+                                            } = &**var
+                                            {
+                                                Some((
+                                                    f.symbol.as_string().clone(),
+                                                    variable_type.clone().get_ptr(*constant),
+                                                ))
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            Some((
+                                                f.symbol.as_string().clone(),
+                                                self.gen_type(&f.symbol_type),
+                                            ))
+                                        }
+                                    })
+                                    .collect();
+                                let Some(types) = types else {
+                                    //TODO: add error 
+                                    return Value::Empty
+                                };
+
+                                (return_type, types)
+                            };
+
+                            let path = &path[..path.len() - 1];
+                            let name = self.get_next_name(path, last.clone());
+
+                            let function_type = IRBuilder::get_fn(return_type.clone(), &types);
+
+                            let mng = self.get_mangled_name_with_path(path, &name);
+                            let function = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.add_function(function_type, mng, self.module),
+                                Value
+                            );
+
+                            let block = check!(
+                                self.errors.borrow_mut(),
+                                self.builder.append_block(&function),
+                                Value
+                            );
+
+                            self.current_block.replace(block);
+                            self.builder.set_position_end(&self.current_block.borrow());
+
+                            self.current_function.replace(function.clone());
+
+                            self.add_and_set_symbol_from_path(
+                                &path,
+                                &name,
+                                SymbolValue::Funtion(function),
+                            );
+
+                            let pallocs: Result<Vec<Value>, _> = types
+                                .iter()
+                                .map(|(_name, ty)| self.builder.create_alloc(ty, true))
+                                .collect();
+                            let pallocs = check!(self.errors.borrow_mut(), pallocs, Value);
+
+                            let res: Result<(), _> = pallocs
+                                .iter()
+                                .enumerate()
+                                .map(|(i, alloc)| {
+                                    let param = unsafe {
+                                        if let Ok(p) = self
+                                            .current_function
+                                            .borrow()
+                                            .get_value(self.builder.get_builder(), self.module)
+                                        {
+                                            LLVMGetParam(p, i.try_into().unwrap())
+                                        } else {
+                                            return Err(CodeGenError {
+                                                message: "Unable to get function value!".to_owned(),
+                                            });
+                                        }
+                                    };
+                                    self.builder.create_store_raw_val(alloc, param)?;
+                                    Ok(())
+                                })
+                                .collect();
+
+                            check!(self.errors.borrow_mut(), res, Value);
+
+                            {
+                                let mut cur_sym = self.symbol_root.borrow_mut();
+                                let current = self
+                                    .get_symbol_mut(&mut cur_sym, &self.current_symbol.borrow());
+
+                                if let Some(c) = current {
+                                    for ((name, _ty), alloc) in types.iter().zip(pallocs.into_iter())
+                                    {
+                                        c.add_child(&name, SymbolValue::Variable(alloc));
+                                    }
+                                }
+                            }
+
+                            let alloc = match return_type {
+                                Type::Unit { .. } => None,
+                                ty => Some(check!(
+                                    self.errors.borrow_mut(),
+                                    self.builder.create_alloc(&ty, false),
+                                    Value
+                                )),
+                            };
+
+                            let val = if let Some(special) = specialization {
+                                let mut sym = self.symbol_root.borrow();
+                                let current = self.get_symbol(&mut sym, &special.1);
+
+                                if let Some(Symbol {
+                                    value:
+                                        SymbolValue::Funtion(Value::FunctionTemplate {
+                                            body,..
                                         }),
                                     ..
                                 }) = current
@@ -1070,6 +1481,7 @@ impl Module {
                         Value::Empty
                     }
                 } else {
+                    let arguments: Vec<_> = fargs.iter().map(|f| self.gen_expression(f)).collect();
                     check!(
                         self.errors.borrow_mut(),
                         self.builder.create_fn_call(&expr, arguments),

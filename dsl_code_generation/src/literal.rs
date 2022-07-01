@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use dsl_errors::check;
-use dsl_util::{TreeDisplay, NULL_STR};
+use dsl_util::{NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
     core::{
@@ -108,8 +108,12 @@ impl Module {
                 named_type,
                 ..
             }) => {
-                if let Some(ty) = named_type {
-                    let ty = self.gen_type(ty.as_ref());
+                if let Some(fty) = named_type {
+                    let ty = self.gen_type(fty.as_ref());
+
+                    if ty.is_empty() {
+                        self.add_error(format!("Unable to find type `{}`", fty));
+                    }
 
                     let vals: Vec<_> = initializer_values
                         .iter()
@@ -185,7 +189,7 @@ impl Module {
                                             match &mut sym.value {
                                                 SymbolValue::Generic(ty, _) => {
                                                     *ty = vals[pos].1.get_type().clone();
-                                                    fn_types.push(ty.to_string())
+                                                    fn_types.push(ty.clone())
                                                 }
                                                 _ => (),
                                             }
@@ -200,8 +204,11 @@ impl Module {
                             }
                         }
 
+                        let fn_types_str: Vec<String> =
+                            fn_types.iter().map(|f| f.to_string()).collect();
+
                         let specialization = specialization.iter().find(|(f, _)| {
-                            for (a, b) in f.iter().zip(fn_types.iter()) {
+                            for (a, b) in f.iter().zip(fn_types_str.iter()) {
                                 if a == "" {
                                     return true;
                                 } else if a != b {
@@ -212,7 +219,7 @@ impl Module {
                             }
                             true
                         });
-                        let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types);
+                        let existing_impl = existing.iter().find(|(f, _)| *f == &fn_types_str);
 
                         let mut vars = LinkedHashMap::new();
 
@@ -220,6 +227,7 @@ impl Module {
                             if let Some(ty) = existing_impl {
                                 Some(ty.1.last().unwrap().clone())
                             } else {
+                                let base = path.clone();
                                 let path = &path[..path.len() - 1];
                                 let name = self.get_next_name(path, last.clone());
 
@@ -269,7 +277,12 @@ impl Module {
                                     let mng = self.get_mangled_name_with_path(path, &name);
                                     let template = check!(
                                         self.errors.borrow_mut(),
-                                        self.builder.create_struct(&path, &mng, vars.clone()),
+                                        self.builder.create_struct(
+                                            tyep,
+                                            Some((base, fn_types.to_vec())),
+                                            &mng,
+                                            vars.clone()
+                                        ),
                                         Value
                                     );
                                     (template, name)
@@ -303,7 +316,7 @@ impl Module {
                             }) = tmpl_templ
                             {
                                 if existing_impl.is_none() {
-                                    existing.insert(fn_types, npath.clone());
+                                    existing.insert(fn_types_str, npath.clone());
                                 }
                             }
                             let current = self.get_symbol(&mut sym, &npath);

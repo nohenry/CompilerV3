@@ -1,17 +1,18 @@
+import poop
 
 template Data<T> {
     x: T
 }
 
 action <T> Data<T> {
-    act(const self) => {
+    act(const self, yes: int32) => {
     }
 }
 
-main(x: int32) => {
-    let data = Data {
-        x: 9
+main() => {
+    let list = List {
+        len: 7
     } 
 
-    data.act()
+    println("Poop {}", 7)
 }

@@ -2,7 +2,7 @@
 use std::{collections::HashMap, ffi::CString, fmt::Display};
 
 use dsl_errors::CodeGenError;
-use dsl_lexer::ast::{FunctionSignature, ParseNode, TypeSymbol};
+use dsl_lexer::ast::{Expression, FunctionSignature, ParseNode, TypeSymbol};
 use dsl_util::{CreateParent, Grouper, TreeDisplay, NULL_STR};
 use linked_hash_map::LinkedHashMap;
 use llvm_sys::{
@@ -80,6 +80,9 @@ pub enum Value {
         load_type: Type,
         constant: bool,
     },
+    Path {
+        path: Vec<String>,
+    },
 }
 
 impl Default for Value {
@@ -98,10 +101,7 @@ impl Value {
             Self::Template { template_type, .. } => template_type,
             Self::TemplateFields { template_type, .. } => template_type,
             Self::Load { load_type, .. } => load_type,
-            Self::Empty
-            | Self::Instruction { .. }
-            | Self::Block { .. }
-            | Self::FunctionTemplate { .. } => {
+            _ => {
                 panic!("Called on unkown value!")
             }
         }
@@ -138,12 +138,6 @@ impl Value {
         module: LLVMModuleRef,
     ) -> Result<LLVMValueRef, CodeGenError> {
         match self {
-            Value::Empty
-            | Value::Block { .. }
-            | Value::FunctionTemplate { .. }
-            | Value::TemplateFields { .. } => Err(CodeGenError {
-                message: "Value didn't contain any usable data!".into(),
-            }),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
             Value::MemberFunction { func, .. } => func.get_value(builder, module),
             Value::Template { llvm_value, .. } => Ok(*llvm_value),
@@ -165,17 +159,14 @@ impl Value {
             Value::Literal { llvm_value, .. } => Ok(*llvm_value),
             Value::Load { llvm_value, .. } => Ok(*llvm_value),
             Value::Instruction { llvm_value, .. } => Ok(*llvm_value),
+            _ => Err(CodeGenError {
+                message: "Value didn't contain any usable data!".into(),
+            }),
         }
     }
 
     pub fn get_raw_value(&self) -> Result<LLVMValueRef, CodeGenError> {
         match self {
-            Value::Empty
-            | Value::Block { .. }
-            | Value::FunctionTemplate { .. }
-            | Value::TemplateFields { .. } => Err(CodeGenError {
-                message: "Value didn't contain any usable data!".into(),
-            }),
             Value::Function { llvm_value, .. } => Ok(*llvm_value),
             Value::MemberFunction { func, .. } => func.get_raw_value(),
             Value::Template { llvm_value, .. } => Ok(*llvm_value),
@@ -184,6 +175,9 @@ impl Value {
             Value::Load { llvm_value, .. } => Ok(*llvm_value),
 
             Value::Instruction { llvm_value, .. } => Ok(*llvm_value),
+            _ => Err(CodeGenError {
+                message: "Value didn't contain any usable data!".into(),
+            }),
         }
     }
 
@@ -446,6 +440,7 @@ impl Display for Value {
             Value::Block { .. } => write!(f, "Block"),
             Value::FunctionTemplate { .. } => write!(f, "Function Template"),
             Value::Empty => write!(f, "Empty"),
+            Value::Path { path } => write!(f, "Path {:?}", path),
         }
     }
 }
@@ -522,6 +517,7 @@ pub enum Type {
         llvm_type: LLVMTypeRef,
         fields: LinkedHashMap<String, Type>,
         path: Vec<String>,
+        base_template: Option<(Vec<String>, Vec<Type>)>,
     },
     TemplateTemplate {
         // llvm_type: LLVMTypeRef,
@@ -849,14 +845,14 @@ impl PartialEq for Type {
             ) => l_llvm_type == r_llvm_type && l_base_type == r_base_type && l_const == r_const,
             (
                 Self::Function {
-                    llvm_type: l_llvm_type,
                     parameters: l_parameters,
                     return_type: l_return_type,
+                    ..
                 },
                 Self::Function {
-                    llvm_type: r_llvm_type,
                     parameters: r_parameters,
                     return_type: r_return_type,
+                    ..
                 },
             ) => {
                 for p in r_parameters.values().zip(l_parameters.values()) {
@@ -879,10 +875,10 @@ impl PartialEq for Type {
 bitflags! {
     pub struct SymbolFlags: u32 {
         const CONSTANT = 0b00000001;
+        const EXPORT = 0b00000010;
     }
 }
 
-#[derive(Debug)]
 pub enum SymbolValue {
     Empty,
     Variable(Value),
@@ -894,6 +890,7 @@ pub enum SymbolValue {
     Alias(Type),
     Generic(Type, GenericType),
     Primitive(Type),
+    Macro(Box<dyn Fn(&Vec<Expression>) -> ParseNode>),
     Module,
 }
 
@@ -906,7 +903,6 @@ impl SymbolValue {
     }
 }
 
-#[derive(Debug)]
 pub struct Symbol {
     pub name: String,
     pub value: SymbolValue,
@@ -971,6 +967,7 @@ impl Display for Symbol {
                 SymbolValue::Alias(_) => write!(f, "Alias `{}`", self.name),
                 SymbolValue::Empty => write!(f, "{}", self.name),
                 SymbolValue::Field(_) => write!(f, "Field `{}`", self.name),
+                SymbolValue::Macro(_) => write!(f, "Maro `{}`", self.name),
                 SymbolValue::Funtion(_) => write!(f, "Function `{}`", self.name),
                 SymbolValue::Module => write!(f, "Module `{}`", self.name),
                 SymbolValue::Spec(_) => write!(f, "Spec `{}`", self.name),
@@ -986,6 +983,7 @@ impl Display for Symbol {
                 SymbolValue::Action(_) => write!(f, "Action `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Alias(_) => write!(f, "Alias `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Empty => write!(f, "{} ({:?})", self.name, self.flags),
+                SymbolValue::Macro(_) => write!(f, "Macro {} ({:?})", self.name, self.flags),
                 SymbolValue::Field(_) => write!(f, "Field `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Funtion(_) => write!(f, "Function `{}` ({:?})", self.name, self.flags),
                 SymbolValue::Module => write!(f, "Module `{}` ({:?})", self.name, self.flags),
