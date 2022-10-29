@@ -1,0 +1,17 @@
+[package]
+name = "ts_code_generation"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ts_parser= {path = "../ts_parser"}
+ts_util = {path = "../ts_util"}
+ts_lexer = {path = "../ts_lexer"}
+ts_symbol = {path = "../ts_symbol"}
+ts_errors= {path = "../ts_errors"}
+ts_llvm = {path = "../ts_llvm"}
+llvm-sys = {path ="../llvm-sys"}
+colored = "2"
+linked-hash-map = "0.5.4"

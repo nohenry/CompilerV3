@@ -1,0 +1,12 @@
+[package]
+name = "ts_parser"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ts_lexer = {path = "../ts_lexer"}
+ts_errors = {path = "../ts_errors"}
+ts_symbol = {path="../ts_symbol"}
+colored = "2"

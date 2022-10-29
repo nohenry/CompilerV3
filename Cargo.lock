@@ -29,28 +29,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "cc"
-version = "1.0.73"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fff2a6927b3bb87f9595d67196a70493f627687a71d87a0d692242c33f58c11"
-
-[[package]]
-name = "cfg-if"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
-
-[[package]]
-name = "clang-sys"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a050e2153c5be08febd6734e29298e844fdb0fa21aeddd63b4eb7baa106c69b"
-dependencies = [
- "glob",
- "libc",
-]
-
-[[package]]
 name = "colored"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -62,153 +40,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "conv"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78ff10625fd0ac447827aa30ea8b861fead473bb60aeb73af6c1c58caf0d1299"
-dependencies = [
- "custom_derive",
-]
-
-[[package]]
-name = "custom_derive"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
-
-[[package]]
-name = "dsl_code_generation"
-version = "0.1.0"
-dependencies = [
- "colored",
- "dsl_errors",
- "dsl_lexer",
- "dsl_llvm",
- "dsl_parser",
- "dsl_symbol",
- "dsl_util",
- "linked-hash-map",
- "llvm-sys",
-]
-
-[[package]]
-name = "dsl_compiler"
-version = "0.1.0"
-dependencies = [
- "colored",
- "dsl_code_generation",
- "dsl_lexer",
- "dsl_llvm",
- "dsl_parser",
- "dsl_symbol",
- "dsl_util",
- "llvm-sys",
- "rt-format",
-]
-
-[[package]]
-name = "dsl_errors"
-version = "0.1.0"
-
-[[package]]
-name = "dsl_lexer"
-version = "0.1.0"
-dependencies = [
- "colored",
- "dsl_errors",
- "dsl_macros",
- "dsl_trie",
- "dsl_util",
- "lazy_static",
- "rt-format",
-]
-
-[[package]]
-name = "dsl_llvm"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "conv",
- "dsl_errors",
- "dsl_symbol",
- "dsl_util",
- "linked-hash-map",
- "llvm-sys",
-]
-
-[[package]]
-name = "dsl_macros"
-version = "0.1.0"
-dependencies = [
- "dsl_trie",
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "dsl_parser"
-version = "0.1.0"
-dependencies = [
- "colored",
- "dsl_errors",
- "dsl_lexer",
- "dsl_symbol",
-]
-
-[[package]]
-name = "dsl_symbol"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "dsl_errors",
- "dsl_lexer",
- "dsl_util",
- "linked-hash-map",
- "llvm-sys",
-]
-
-[[package]]
-name = "dsl_trie"
-version = "0.1.0"
-dependencies = [
- "colored",
-]
-
-[[package]]
-name = "dsl_util"
-version = "0.1.0"
-
-[[package]]
-name = "fastrand"
-version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3fcf0cee53519c866c09b5de1f6c56ff9d647101f81c1964fa632e148896cdf"
-dependencies = [
- "instant",
-]
-
-[[package]]
-name = "glob"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "instant"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -230,40 +67,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fb9b38af92608140b86b693604b9ffcc5824240a484d1ecd4795bacb2fe88f3"
 
 [[package]]
-name = "llvm-sys"
-version = "130.0.3"
-dependencies = [
- "cc",
- "clang-sys",
- "lazy_static",
- "libc",
- "regex",
- "semver",
- "tempfile",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
-name = "pest"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10f4872ae94d7b90ae48754df22fd42ad52ce740b8f370b03da4835417403e53"
-dependencies = [
- "ucd-trie",
-]
-
-[[package]]
 name = "proc-macro2"
-version = "1.0.32"
+version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba508cc11742c0dc5c1659771673afbab7a0efab23aa17e854cbab0837ed0b43"
+checksum = "5ea3d908b0e36316caf9e9e2c4625cdde190a7e6f440d794667ed17a1855e725"
 dependencies = [
- "unicode-xid",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -273,15 +88,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38bc8cc6a5f2e3655e0899c1b848643b2562f853f114bfec7be120678e3ace05"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "redox_syscall"
-version = "0.2.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62f25bc4c7e55e0b0b7a1d43fb893f4fa1361d0abe38b9ce4f323c2adfe6ef42"
-dependencies = [
- "bitflags",
 ]
 
 [[package]]
@@ -302,15 +108,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49b3de9ec5dc0a3417da371aab17d729997c15010e7fd24ff707773a33bddb64"
 
 [[package]]
-name = "remove_dir_all"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
-dependencies = [
- "winapi",
-]
-
-[[package]]
 name = "rt-format"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -321,48 +118,106 @@ dependencies = [
 ]
 
 [[package]]
-name = "semver"
-version = "0.11.0"
+name = "syn"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f301af10236f6df4160f7c3f04eec6dbc70ace82d23326abad5edee88801c6b6"
+checksum = "a864042229133ada95abf3b54fdc62ef5ccabe9515b64717bcb9a1919e59445d"
 dependencies = [
- "semver-parser",
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
 ]
 
 [[package]]
-name = "semver-parser"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b0bef5b7f9e0df16536d3961cfb6e84331c065b4066afb39768d0e319411f7"
+name = "ts_compiler"
+version = "0.1.0"
 dependencies = [
- "pest",
+ "colored",
+ "rt-format",
+ "ts_evaluator",
+ "ts_lexer",
+ "ts_parser",
+ "ts_symbol",
+ "ts_util",
 ]
 
 [[package]]
-name = "tempfile"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cdb1ef4eaeeaddc8fbd371e5017057064af0911902ef36b39801f67cc6d79e4"
+name = "ts_errors"
+version = "0.1.0"
+
+[[package]]
+name = "ts_evaluator"
+version = "0.1.0"
 dependencies = [
- "cfg-if",
- "fastrand",
- "libc",
- "redox_syscall",
- "remove_dir_all",
- "winapi",
+ "colored",
+ "linked-hash-map",
+ "ts_errors",
+ "ts_lexer",
+ "ts_parser",
+ "ts_symbol",
+ "ts_util",
 ]
 
 [[package]]
-name = "ucd-trie"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56dee185309b50d1f11bfedef0fe6d036842e3fb77413abef29f8f8d1c5d4c1c"
+name = "ts_lexer"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "lazy_static",
+ "rt-format",
+ "ts_errors",
+ "ts_macros",
+ "ts_trie",
+ "ts_util",
+]
 
 [[package]]
-name = "unicode-xid"
-version = "0.2.2"
+name = "ts_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "ts_trie",
+]
+
+[[package]]
+name = "ts_parser"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "ts_errors",
+ "ts_lexer",
+ "ts_symbol",
+]
+
+[[package]]
+name = "ts_symbol"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "linked-hash-map",
+ "ts_errors",
+ "ts_lexer",
+ "ts_util",
+]
+
+[[package]]
+name = "ts_trie"
+version = "0.1.0"
+dependencies = [
+ "colored",
+]
+
+[[package]]
+name = "ts_util"
+version = "0.1.0"
+
+[[package]]
+name = "unicode-ident"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+checksum = "6ceab39d59e4c9499d4e5a8ee0e2735b891bb7308ac83dfb4e80cad195c9f6f3"
 
 [[package]]
 name = "winapi"
