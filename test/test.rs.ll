@@ -3,8 +3,10 @@ source_filename = "test.36762699-cgu.0"
 target datalayout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-windows-msvc"
 
+%Data = type {}
+
 @vtable.0 = private unnamed_addr constant <{ i8*, [16 x i8], i8*, i8*, i8* }> <{ i8* bitcast (void (i64**)* @"_ZN4core3ptr85drop_in_place$LT$std..rt..lang_start$LT$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h474366d8b931e683E" to i8*), [16 x i8] c"\08\00\00\00\00\00\00\00\08\00\00\00\00\00\00\00", i8* bitcast (i32 (i64**)* @"_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17hc4726b8faa2f60f5E" to i8*), i8* bitcast (i32 (i64**)* @"_ZN3std2rt10lang_start28_$u7b$$u7b$closure$u7d$$u7d$17h87c5ae68f7928da5E" to i8*), i8* bitcast (i32 (i64**)* @"_ZN3std2rt10lang_start28_$u7b$$u7b$closure$u7d$$u7d$17h87c5ae68f7928da5E" to i8*) }>, align 8
-@alloc2 = private unnamed_addr constant <{ [4 x i8] }> <{ [4 x i8] c"\05\00\00\00" }>, align 4
+@vtable.1 = private unnamed_addr constant <{ i8*, [16 x i8], i8* }> <{ i8* bitcast (void (%Data*)* @"_ZN4core3ptr31drop_in_place$LT$test..Data$GT$17hd3483e70ae094980E" to i8*), [16 x i8] c"\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00", i8* bitcast (void (%Data*)* @_ZN4test5Write5write17hd7db02caaed3ef90E to i8*) }>, align 8
 
 ; std::sys_common::backtrace::__rust_begin_short_backtrace
 ; Function Attrs: noinline uwtable
@@ -152,6 +154,13 @@ bb1:                                              ; preds = %start
   ret void
 }
 
+; core::ptr::drop_in_place<test::Data>
+; Function Attrs: inlinehint uwtable
+define internal void @"_ZN4core3ptr31drop_in_place$LT$test..Data$GT$17hd3483e70ae094980E"(%Data* %_1) unnamed_addr #2 {
+start:
+  ret void
+}
+
 ; core::ptr::drop_in_place<std::rt::lang_start<()>::{{closure}}>
 ; Function Attrs: inlinehint uwtable
 define internal void @"_ZN4core3ptr85drop_in_place$LT$std..rt..lang_start$LT$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h474366d8b931e683E"(i64** %_1) unnamed_addr #2 {
@@ -189,10 +198,24 @@ start:
   ret i32 %self
 }
 
+; test::Write::write
+; Function Attrs: uwtable
+define internal void @_ZN4test5Write5write17hd7db02caaed3ef90E(%Data* align 1 %self) unnamed_addr #1 {
+start:
+  ret void
+}
+
 ; test::af
 ; Function Attrs: uwtable
-define internal void @_ZN4test2af17h2ee18dbf15840788E(i32* align 4 %f) unnamed_addr #1 {
+define internal void @_ZN4test2af17hf66a34082d0e27f8E({}* align 1 %b.0, [3 x i64]* align 8 %b.1) unnamed_addr #1 {
 start:
+  %0 = bitcast [3 x i64]* %b.1 to void ({}*)**
+  %1 = getelementptr inbounds void ({}*)*, void ({}*)** %0, i64 3
+  %2 = load void ({}*)*, void ({}*)** %1, align 8, !invariant.load !2, !nonnull !2
+  call void %2({}* align 1 %b.0)
+  br label %bb1
+
+bb1:                                              ; preds = %start
   ret void
 }
 
@@ -200,8 +223,10 @@ start:
 ; Function Attrs: uwtable
 define internal void @_ZN4test4main17h4334b6ba00ae6a3eE() unnamed_addr #1 {
 start:
+  %data = alloca %Data, align 1
+  %_3.0 = bitcast %Data* %data to {}*
 ; call test::af
-  call void @_ZN4test2af17h2ee18dbf15840788E(i32* align 4 bitcast (<{ [4 x i8] }>* @alloc2 to i32*))
+  call void @_ZN4test2af17hf66a34082d0e27f8E({}* align 1 %_3.0, [3 x i64]* align 8 bitcast (<{ i8*, [16 x i8], i8* }>* @vtable.1 to [3 x i64]*))
   br label %bb1
 
 bb1:                                              ; preds = %start
@@ -233,4 +258,4 @@ attributes #3 = { "target-cpu"="x86-64" }
 !0 = !{i32 7, !"PIC Level", i32 2}
 !1 = !{i32 7, !"PIE Level", i32 2}
 !2 = !{}
-!3 = !{i32 3185485}
+!3 = !{i32 3185617}
